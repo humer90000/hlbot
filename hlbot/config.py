@@ -36,7 +36,7 @@ _CAP = {
     "min_day_volume_usd": ("min", 1_000_000),
 }
 
-_TOP = {"mode", "host", "port", "equity", "arm_file", "account", "vault", "risk", "strategy"}
+_TOP = {"mode", "host", "port", "equity", "arm_file", "account", "vault", "interval", "risk", "strategy"}
 
 
 class ConfigError(ValueError):
@@ -71,6 +71,7 @@ class AppConfig:
     limits: Limits
     strategies: list
     info_url: str
+    interval: str = "15m"
 
 
 def ceilings() -> dict:
@@ -155,6 +156,11 @@ def load_app(path) -> AppConfig:
     equity = float(data.get("equity", 10_000))
     if equity <= 0:
         raise ConfigError("equity")
+    from hlbot.feed import INTERVALS
+
+    interval = str(data.get("interval") or "15m")
+    if interval not in INTERVALS:
+        raise ConfigError("interval")
     from hlbot.strat import build_strategy
 
     rows = data.get("strategy", [])
@@ -172,4 +178,5 @@ def load_app(path) -> AppConfig:
         limits=resolve_limits(data.get("risk", {})),
         strategies=strategies,
         info_url=info_url(mode),
+        interval=interval,
     )

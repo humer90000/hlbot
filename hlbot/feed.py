@@ -73,13 +73,26 @@ def _book(ctx, now_ms: int):
     )
 
 
+# hl candleSnapshot intervals. 1M (month) is left out on purpose, it collides with 1m.
+INTERVALS = {
+    "1m": 60_000,
+    "3m": 180_000,
+    "5m": 300_000,
+    "15m": 900_000,
+    "30m": 1_800_000,
+    "1h": 3_600_000,
+    "2h": 7_200_000,
+    "4h": 14_400_000,
+    "8h": 28_800_000,
+    "12h": 43_200_000,
+    "1d": 86_400_000,
+    "3d": 259_200_000,
+    "1w": 604_800_000,
+}
+
+
 def candle_body(coin: str, now_ms: int, interval: str = "15m", bars: int = 40) -> dict:
-    step = {
-        "1m": 60_000,
-        "5m": 300_000,
-        "15m": 900_000,
-        "1h": 3_600_000,
-    }.get(interval, 900_000)
+    step = INTERVALS.get(interval, INTERVALS["15m"])
     return {
         "type": "candleSnapshot",
         "req": {
@@ -91,7 +104,9 @@ def candle_body(coin: str, now_ms: int, interval: str = "15m", bars: int = 40) -
     }
 
 
-def apply_candles(book: Book, rows) -> None:
+def apply_candles(book: Book, rows, interval=None) -> None:
+    if interval:
+        rows = [r for r in rows if not r.get("i") or r.get("i") == interval]
     rows = sorted(rows, key=lambda r: int(r["t"]))
     if not rows:
         return

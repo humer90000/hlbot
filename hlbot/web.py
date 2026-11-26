@@ -122,6 +122,16 @@ def create_app(session, token: str, reload_fn=None) -> FastAPI:
             return JSONResponse({"error": str(exc)}, status_code=400)
         return {"ok": True, "mode": out["mode"], "agent": out.get("agent", "")}
 
+    @app.post("/api/interval")
+    async def save_interval(request: Request):
+        body = await request.json()
+        if not isinstance(body, dict):
+            return JSONResponse({"error": "interval"}, status_code=400)
+        err = session.set_interval(str(body.get("interval") or ""))
+        if err:
+            return JSONResponse({"error": err}, status_code=400)
+        return {"ok": True, "interval": session.interval}
+
     @app.post("/api/flatten")
     def flatten():
         return {"ok": True, "n": len(session.flatten())}

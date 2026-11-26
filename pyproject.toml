@@ -1,7 +1,7 @@
 [project]
 name = "hlbot"
 version = "0.3.2"
-description = "local hyperliquid bot"
+description = "Local Hyperliquid Tradebot"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",

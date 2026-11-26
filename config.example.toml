@@ -1,5 +1,7 @@
 # paper. mainnet prices, fills stay local.
 mode = "paper"
+# bar size the strategies read. 1m 5m 15m 1h 4h 1d, the list is on the page
+interval = "15m"
 host = "127.0.0.1"
 port = 8787
 equity = 10000

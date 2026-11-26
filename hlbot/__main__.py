@@ -25,6 +25,7 @@ def _session(cfg, state_dir, transport):
         journal_path=journal,
         transport=transport,
         beat_max_ms=10_000,
+        interval=cfg.interval,
     )
 
 
@@ -97,7 +98,7 @@ def _refresh_candles(session):
         coin = session.coins.get(name)
         if coin is None:
             continue
-        rows = post_info(session.info_url, candle_body(coin.api or name, now))
+        rows = post_info(session.info_url, candle_body(coin.api or name, now, session.interval))
         if session.ingest_candles(name, rows):
             got += 1
     return got

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>hlbot</title>
+<title>Local Hyperliquid Tradebot</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
@@ -290,7 +290,7 @@
 <body>
 <div id="gate">
   <form class="card" id="login-form">
-    <div class="brand">hlbot</div>
+    <div class="brand">Local Hyperliquid Tradebot</div>
     <div class="sub">token from the terminal. doesn't leave this machine.</div>
     <input id="token" type="password" autocomplete="off" placeholder="token" autofocus>
     <div class="row"><button class="btn primary" type="submit">Open</button></div>
@@ -300,7 +300,7 @@
 
 <div id="desk" hidden>
   <header class="top">
-    <div class="brand">hlbot</div>
+    <div class="brand">Local Hyperliquid Tradebot</div>
     <span class="pill" id="mode">paper</span>
     <span class="pill" id="arm-pill">safe</span>
     <div class="stat"><span>equity</span><b class="num" id="eq">—</b></div>
@@ -410,7 +410,7 @@ const TIPS = {
   stop_atr: "stop in ATRs. reduce-only, sits on the exchange.",
   take_r: "target, multiple of the stop. blank means no target.",
   risk_frac: "what you lose if the stop fills. it won't take more than 2%.",
-  max_hold_bars: "kick it after this many 15m bars even if the signal's still on.",
+  max_hold_bars: "kick it after this many bars. the size is whatever the dropdown says.",
   funding_block: "hourly. longs pay when it's positive. past this, that side is skipped.",
   fast: "short ema. has to be smaller than the slow one.",
   slow: "long ema.",
@@ -696,7 +696,7 @@ function paintCoin() {
   if (!c) {
     const p = document.createElement("p");
     p.className = "meta";
-    p.textContent = "click a row. 15m bars show up once the name is on.";
+    p.textContent = "click a row. bars show up once the name is on.";
     root.appendChild(p);
     return;
   }
@@ -716,7 +716,7 @@ function paintCoin() {
     ["Funding", c.funding == null ? "—" : (c.funding * 1e4).toFixed(2) + " bps/hr"],
     ["Day volume", usd(c.day_ntl)],
     ["Quote", age(c.book_age_ms)],
-    ["15m bars", c.bars ? String(c.bars) : "waiting"],
+    [(state.interval || "15m") + " bars", c.bars ? String(c.bars) : "waiting"],
     ["Position", c.position ? String(c.position) : "flat"],
     ["Liquidity", c.liquid ? "passes the floor" : "thin"],
   ].forEach(([k, v]) => {
@@ -785,11 +785,46 @@ const SIMPLE_DEFAULTS = {
   macd: { fast: 12, slow: 26, signal: 9 },
   bollinger: { length: 20, mult: 2 },
 };
+const INTERVALS = ["1m", "3m", "5m", "15m", "30m", "1h", "2h", "4h", "8h", "12h", "1d", "3d", "1w"];
+
+function intervalPicker() {
+  const wrap = document.createElement("div");
+  wrap.className = "field";
+  const lab = document.createElement("label");
+  lab.textContent = "Bar size";
+  const sel = document.createElement("select");
+  const cur = state.interval || "15m";
+  INTERVALS.forEach((iv) => {
+    const opt = document.createElement("option");
+    opt.value = iv;
+    opt.textContent = iv;
+    if (iv === cur) opt.selected = true;
+    sel.appendChild(opt);
+  });
+  sel.onchange = async () => {
+    try {
+      await api("/api/interval", { method: "POST", body: JSON.stringify({ interval: sel.value }) });
+      state.interval = sel.value;
+      toast(sel.value);
+    } catch (err) {
+      toast(err.message || "interval", "bad");
+      sel.value = state.interval || "15m";
+    }
+  };
+  const tip = document.createElement("div");
+  tip.className = "tip";
+  tip.textContent = "every strategy reads this. switching dumps the bars already loaded.";
+  wrap.appendChild(lab);
+  wrap.appendChild(sel);
+  wrap.appendChild(tip);
+  return wrap;
+}
 
 function paintStrategies(force) {
   const root = $("pane-strategies");
   if (!force && root.contains(document.activeElement)) return;
   root.innerHTML = "";
+  root.appendChild(intervalPicker());
   const intro = document.createElement("div");
   intro.className = "meta";
   intro.textContent = "one of these runs. the gate still has to say yes.";
@@ -850,7 +885,7 @@ function simpleForm() {
   kindWrap.appendChild(kind);
   const kindTip = document.createElement("div");
   kindTip.className = "tip";
-  kindTip.textContent = "these read the 15m bars. advanced is raw json if you want your own rules.";
+  kindTip.textContent = "these read the bars. size is the dropdown above. advanced is raw json.";
   kindWrap.appendChild(kindTip);
   form.appendChild(kindWrap);
   const specifics = document.createElement("div");

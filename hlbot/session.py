@@ -42,6 +42,7 @@ class Session:
         transport=None,
         frozen=False,
         beat_max_ms=10_000,
+        interval="15m",
     ):
         self.limits = limits
         self.coins = dict(coins)
@@ -79,6 +80,9 @@ class Session:
         self.lock = threading.Lock()
         self.journal = Journal(journal_path) if journal_path else None
         self.last_error = ""
+        from hlbot.feed import INTERVALS
+
+        self.interval = interval if interval in INTERVALS else "15m"
 
     def gate(self) -> Gate:
         return Gate(self.limits, set(self.enabled), set(self.forced))
@@ -279,6 +283,25 @@ class Session:
         with self.lock:
             self.halted = False
             self.note("resume")
+
+    def set_interval(self, value):
+        from hlbot.feed import INTERVALS
+
+        if value not in INTERVALS:
+            return "interval"
+        with self.lock:
+            if value == self.interval:
+                return None
+            self.interval = value
+            for book in self.books.values():
+                book.highs = ()
+                book.lows = ()
+                book.closes = ()
+                book.bar_ts = 0
+            self.bar_seen.clear()
+            self.pos_bars.clear()
+            self.note("interval " + value)
+        return None
 
     def seed_coins(self, names=("BTC", "ETH")):
         for name in names:
@@ -566,7 +589,7 @@ class Session:
             book = self.books.get(name)
             if book is None or not rows:
                 return False
-            apply_candles(book, rows)
+            apply_candles(book, rows, self.interval)
             return True
 
     def push_candle(self, key, row) -> bool:
@@ -574,6 +597,9 @@ class Session:
             name = self._name_for(key)
             book = self.books.get(name) if name else None
             if book is None or not isinstance(row, dict):
+                return False
+            mark = row.get("i")
+            if mark and mark != self.interval:
                 return False
             try:
                 t = int(row["t"])
@@ -646,6 +672,7 @@ class Session:
                 "beat_age_ms": age,
                 "quote_age_ms": quote_age,
                 "feed": self.feed,
+                "interval": self.interval,
                 "coins": len(self.coins),
                 "enabled": len(self.enabled),
                 "positions": positions,

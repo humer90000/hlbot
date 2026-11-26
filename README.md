@@ -1,6 +1,8 @@
-# hlbot
+# Local Hyperliquid Tradebot
 
-A Hyperliquid bot that runs on your computer, with a web page on top.
+A Hyperliquid bot that runs on your computer. You manage it in the browser: coins, strategies, risk, the account. The page is only on this machine (`127.0.0.1`), so the setup does not leave the box.
+
+![desk after login](desk.png)
 
 Paper mode is the default. It reads the real market, but the fills stay inside the program. Nothing is sent to the exchange until you connect an agent wallet and press Arm. For a live account you also need an empty file named `ARM` in the project folder. That file is not a password. The program only checks that it exists.
 
@@ -177,7 +179,7 @@ rules = [
 ]
 ```
 
-Signals use 15 minute bars. The strategy only asks for a trade. Size, spread, a stale book and the daily loss limit are checked after that, and the order can still be dropped.
+The bar size starts at 15 minutes. On Strategies there is a dropdown if you want 1m, 5m, 1h, 4h, 1d, or the others in that list. Switching throws away the bars already loaded. The strategy still only asks. Size, spread, a stale book and the daily loss limit can still drop the order.
 
 ## Other
 

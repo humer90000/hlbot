@@ -119,6 +119,26 @@ def test_touch_top_writes_the_live_bid(session):
     assert session.push_candle("BTC", {"t": 20, "h": "5", "l": "3", "c": "4"})
     assert session.books["BTC"].closes == (3.5, 4.0)
     assert session.books["BTC"].bar_ts == 20
+    assert session.push_candle("BTC", {"t": 30, "h": "6", "l": "4", "c": "5", "i": "1h"}) is False
+    assert session.books["BTC"].bar_ts == 20
+
+
+def test_interval_switch_drops_the_old_bars(session):
+    session.books["BTC"] = Book(
+        bid=100, ask=100.1, bid_sz=1, ask_sz=1, mark=100, funding=0, day_ntl=2e7,
+        book_ts=1, bar_ts=10, highs=(3,), lows=(1,), closes=(2,),
+    )
+    session.bar_seen["BTC"] = 10
+    session.pos_bars["BTC"] = 4
+    assert session.set_interval("nope") == "interval"
+    assert session.interval == "15m"
+    assert session.books["BTC"].closes == (2,)
+    assert session.set_interval("1h") is None
+    assert session.interval == "1h"
+    assert session.books["BTC"].closes == ()
+    assert session.books["BTC"].bar_ts == 0
+    assert session.bar_seen == {}
+    assert session.set_interval("1h") is None
 
 
 def test_state_hides_the_agent_secret(client, session):

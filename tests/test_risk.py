@@ -148,3 +148,4 @@ def test_example_config_loads():
     assert [s.name for s in cfg.strategies] == ["ema", "rsi", "macd", "bollinger", "donchian"]
     assert [s.enabled for s in cfg.strategies] == [True, False, False, False, False]
     assert cfg.strategies[0].fast == 9 and cfg.strategies[0].slow == 21
+    assert cfg.interval == "15m"

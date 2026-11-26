@@ -4,6 +4,7 @@ import time
 
 _SOCK = {}
 _SUBBED = set()
+_CANDLE = {}
 
 
 def start(session, stop, prices, mids, candles):
@@ -49,6 +50,7 @@ def _socket(session, stop):
     def on_open(sock):
         holder["ws"] = sock
         _SUBBED.clear()
+        _CANDLE.clear()
         sock.send(json.dumps({"method": "subscribe", "subscription": {"type": "allMids"}}))
         _subscribe_enabled(session, sock)
 
@@ -111,8 +113,25 @@ def _books(session, stop, prices, candles):
 
 
 def _subscribe_enabled(session, sock):
-    for name in session.enabled_names():
-        if name in _SUBBED:
+    want = session.interval
+    enabled = set(session.enabled_names())
+    for name, old in list(_CANDLE.items()):
+        if name in enabled and old == want:
+            continue
+        coin = session.coins.get(name)
+        api = (coin.api or name) if coin else name
+        try:
+            sock.send(
+                json.dumps(
+                    {"method": "unsubscribe", "subscription": {"type": "candle", "coin": api, "interval": old}}
+                )
+            )
+        except Exception:
+            return
+        _CANDLE.pop(name, None)
+        _SUBBED.discard(name)
+    for name in enabled:
+        if name in _SUBBED and _CANDLE.get(name) == want:
             continue
         coin = session.coins.get(name)
         if coin is None:
@@ -122,11 +141,12 @@ def _subscribe_enabled(session, sock):
             sock.send(json.dumps({"method": "subscribe", "subscription": {"type": "bbo", "coin": api}}))
             sock.send(
                 json.dumps(
-                    {"method": "subscribe", "subscription": {"type": "candle", "coin": api, "interval": "15m"}}
+                    {"method": "subscribe", "subscription": {"type": "candle", "coin": api, "interval": want}}
                 )
             )
         except Exception:
             return
+        _CANDLE[name] = want
         _SUBBED.add(name)
 
 
