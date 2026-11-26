@@ -1,0 +1,1340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hlbot</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0c0f14;
+    --panel: #141922;
+    --panel-2: #1b212c;
+    --line: #2c3544;
+    --text: #e8edf5;
+    --muted: #8e9aab;
+    --brass: #e2b56a;
+    --brass-ink: #1c1508;
+    --bid: #8fd0a8;
+    --ask: #e39286;
+    --info: #8eb0dd;
+    --danger: #e7a196;
+    --shadow: 0 16px 50px rgba(0,0,0,.35);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.4 "IBM Plex Sans", "Segoe UI", sans-serif;
+  }
+  button, input, select, textarea { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  button:disabled { opacity: .45; cursor: default; }
+  .num { font-family: "IBM Plex Mono", Consolas, monospace; font-variant-numeric: tabular-nums; }
+
+  [hidden] { display: none !important; }
+  #gate {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    display: grid;
+    place-items: center;
+    background:
+      radial-gradient(900px 420px at 50% -10%, rgba(226,181,106,.14), transparent 60%),
+      var(--bg);
+  }
+  .card {
+    width: min(400px, calc(100% - 32px));
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 22px 22px 18px;
+    box-shadow: var(--shadow);
+  }
+  .brand { font-weight: 600; letter-spacing: .02em; }
+  .sub { color: var(--muted); margin: 6px 0 16px; font-size: 13px; }
+  .card input {
+    width: 100%;
+    background: #0e131b;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+  .card .row { display: flex; justify-content: flex-end; margin-top: 12px; }
+  .err { color: var(--danger); min-height: 1.2em; margin-top: 8px; font-size: 13px; }
+
+  .top {
+    height: 56px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 0 16px;
+    border-bottom: 1px solid var(--line);
+    background: #10141b;
+  }
+  .top .grow { flex: 1; }
+  .stat { display: flex; flex-direction: column; line-height: 1.15; }
+  .stat b { font-weight: 500; }
+  .stat span { color: var(--muted); font-size: 11px; letter-spacing: .04em; text-transform: uppercase; }
+  .pos { color: var(--bid); }
+  .neg { color: var(--ask); }
+  .pill {
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 3px 9px;
+    font-size: 12px;
+    letter-spacing: .03em;
+  }
+  .pill.paper { color: var(--info); background: #162033; border-color: #314864; }
+  .pill.live { color: #ffd0c8; background: #2a1614; border-color: #8a4034; }
+  .pill.halted { color: var(--brass); background: #2a2416; border-color: #6d5a32; }
+  .actions { display: flex; gap: 8px; }
+
+  button.btn, .btn {
+    background: #1c2430;
+    border: 1px solid #3a4658;
+    border-radius: 8px;
+    padding: 6px 11px;
+  }
+  button.btn:hover { background: #243044; }
+  button.primary { background: var(--brass); color: var(--brass-ink); border-color: var(--brass); font-weight: 600; }
+  button.primary:hover { filter: brightness(1.05); }
+  button.danger { background: transparent; color: var(--danger); border-color: #8a4034; }
+  button.quiet { background: transparent; }
+
+  .desk {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 400px;
+    height: calc(100vh - 56px);
+  }
+  main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .toolbar {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--line);
+    flex-wrap: wrap;
+  }
+  .toolbar input[type="search"] {
+    width: 220px;
+    background: #0e131b;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 7px 10px;
+  }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .seg {
+    display: flex;
+    background: #0e131b;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    padding: 2px;
+  }
+  .seg button {
+    border: 0;
+    background: transparent;
+    border-radius: 7px;
+    padding: 5px 10px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .seg button.on { background: #2a2418; color: #f3e2c4; }
+  .chip {
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 4px 10px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .chip.on { color: #f3e2c4; border-color: #8d7344; background: #2a2418; }
+  .pager { margin-left: auto; display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 12px; }
+
+  .scroll { flex: 1; overflow: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 7px 10px; border-bottom: 1px solid #222a36; white-space: nowrap; }
+  th {
+    position: sticky; top: 0; z-index: 1;
+    background: #121820;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    text-align: left;
+    cursor: pointer;
+  }
+  th.num, td.num { text-align: right; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: #18202b; }
+  tbody tr.sel { background: #243044; }
+  tbody tr.on td.name { box-shadow: inset 2px 0 0 var(--brass); }
+  td.name { font-weight: 500; }
+  .tag { color: var(--muted); font-size: 11px; margin-left: 6px; }
+  .tag.dead { color: var(--ask); }
+  td.up { color: var(--bid); }
+  td.down { color: var(--ask); }
+  .empty { padding: 48px 16px; color: var(--muted); text-align: center; }
+
+  aside {
+    border-left: 1px solid var(--line);
+    background: var(--panel);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .tabs { display: flex; border-bottom: 1px solid var(--line); }
+  .tabs button {
+    flex: 1;
+    background: transparent;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    padding: 10px 8px;
+    color: var(--muted);
+  }
+  .tabs button.on { color: var(--text); border-bottom-color: var(--brass); }
+  .pane { flex: 1; overflow: auto; padding: 14px 16px 28px; }
+  .pane h2 { margin: 0 0 4px; font-size: 18px; font-weight: 600; }
+  .meta { color: var(--muted); font-size: 12px; margin-bottom: 12px; }
+  .kv { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; font-size: 13px; }
+  .kv span { color: var(--muted); }
+  .split { height: 1px; background: var(--line); margin: 14px 0; }
+  .banner {
+    margin: 0 16px;
+    padding: 8px 10px;
+    border: 1px solid #6d5a32;
+    background: #2a2416;
+    color: #f0e0c0;
+    border-radius: 8px;
+    font-size: 13px;
+  }
+
+  .field { margin: 0 0 10px; position: relative; }
+  .field label { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+  .tip {
+    display: none;
+    position: absolute;
+    left: 0;
+    bottom: calc(100% - 2px);
+    z-index: 4;
+    width: min(280px, 100%);
+    padding: 6px 8px;
+    background: #10161f;
+    border: 1px solid #3a4658;
+    border-radius: 6px;
+    color: #d5deea;
+    font-size: 12px;
+    line-height: 1.35;
+    pointer-events: none;
+    box-shadow: var(--shadow);
+  }
+  .field:hover > .tip, .field:focus-within > .tip { display: block; }
+  .field input, .field textarea, .field select {
+    width: 100%;
+    background: #0e131b;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 7px 9px;
+  }
+  .hint { color: var(--muted); font-size: 11px; margin-top: 3px; }
+  .group-title { margin: 14px 0 8px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  .strat {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 12px;
+    margin-bottom: 10px;
+    background: var(--panel-2);
+  }
+  .strat header { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .checks { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+  textarea.json { min-height: 120px; font-family: "IBM Plex Mono", Consolas, monospace; font-size: 12px; }
+
+  #tape { font-family: "IBM Plex Mono", Consolas, monospace; font-size: 12px; white-space: pre-wrap; color: #c5ceda; }
+
+  #modal { position: fixed; inset: 0; background: rgba(6,8,12,.62); display: flex; align-items: center; justify-content: center; z-index: 5; }
+  #modal[hidden] { display: none; }
+  .sheet {
+    width: min(440px, calc(100% - 32px));
+    background: #171d27;
+    border: 1px solid #3a4658;
+    border-radius: 12px;
+    padding: 18px;
+    box-shadow: var(--shadow);
+  }
+  .sheet h2 { margin: 0 0 8px; font-size: 18px; }
+  .sheet p { margin: 0; color: #c5ceda; }
+  .sheet .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+
+  #toasts { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 6; }
+  .toast {
+    background: #1c2430;
+    border: 1px solid #3a4658;
+    border-radius: 8px;
+    padding: 8px 12px;
+    box-shadow: var(--shadow);
+    max-width: 320px;
+  }
+  .toast.bad { border-color: #8a4034; color: #ffd0c8; }
+  @media (max-width: 980px) {
+    .desk { grid-template-columns: 1fr; height: auto; }
+    aside { border-left: 0; border-top: 1px solid var(--line); min-height: 420px; }
+  }
+</style>
+</head>
+<body>
+<div id="gate">
+  <form class="card" id="login-form">
+    <div class="brand">hlbot</div>
+    <div class="sub">token from the terminal. doesn't leave this machine.</div>
+    <input id="token" type="password" autocomplete="off" placeholder="token" autofocus>
+    <div class="row"><button class="btn primary" type="submit">Open</button></div>
+    <div class="err" id="login-err"></div>
+  </form>
+</div>
+
+<div id="desk" hidden>
+  <header class="top">
+    <div class="brand">hlbot</div>
+    <span class="pill" id="mode">paper</span>
+    <span class="pill" id="arm-pill">safe</span>
+    <div class="stat"><span>equity</span><b class="num" id="eq">—</b></div>
+    <div class="stat"><span>day</span><b class="num" id="pnl">—</b></div>
+    <div class="stat"><span>mids</span><b class="num" id="mids">—</b></div>
+    <div class="stat"><span>loop</span><b class="num" id="loop">—</b></div>
+    <div class="grow"></div>
+    <div class="actions">
+      <button class="btn primary" id="arm" type="button">Arm</button>
+      <button class="btn" id="halt" type="button">Halt</button>
+      <button class="btn quiet" id="resume" type="button">Resume</button>
+      <button class="btn danger" id="flatten" type="button">Flatten</button>
+    </div>
+  </header>
+  <div id="halt-banner" class="banner" hidden style="margin-top:10px">halted. exits still go.</div>
+  <div class="desk">
+    <main>
+      <div class="toolbar">
+        <input id="q" type="search" placeholder="Search coins  /" autocomplete="off">
+        <div class="seg" id="markets"></div>
+        <div class="chips" id="chips"></div>
+        <div class="pager">
+          <span id="range"></span>
+          <button class="btn quiet" id="prev" type="button">Prev</button>
+          <button class="btn quiet" id="next" type="button">Next</button>
+        </div>
+      </div>
+      <div class="scroll" id="scroll">
+        <table>
+          <thead>
+            <tr>
+              <th data-sort="name">Market</th>
+              <th class="num" data-sort="bid">Bid</th>
+              <th class="num" data-sort="ask">Ask</th>
+              <th class="num" data-sort="spread_bps">Spread</th>
+              <th class="num" data-sort="funding">Funding</th>
+              <th class="num" data-sort="day_ntl">Day vol</th>
+              <th class="num" data-sort="position">Pos</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+        <div class="empty" id="empty" hidden>Nothing in this view.</div>
+      </div>
+    </main>
+    <aside>
+      <div class="tabs">
+        <button type="button" data-tab="coin" class="on">Coin</button>
+        <button type="button" data-tab="strategies">Strategies</button>
+        <button type="button" data-tab="risk">Risk</button>
+        <button type="button" data-tab="account">Account</button>
+        <button type="button" data-tab="tape">Tape</button>
+      </div>
+      <div class="pane" id="pane-coin"></div>
+      <div class="pane" id="pane-strategies" hidden></div>
+      <div class="pane" id="pane-risk" hidden></div>
+      <div class="pane" id="pane-account" hidden></div>
+      <div class="pane" id="pane-tape" hidden><div id="tape"></div></div>
+    </aside>
+  </div>
+</div>
+
+<div id="modal" hidden>
+  <div class="sheet">
+    <h2 id="modal-title"></h2>
+    <p id="modal-body"></p>
+    <div class="row">
+      <button class="btn quiet" id="modal-cancel" type="button">Cancel</button>
+      <button class="btn primary" id="modal-ok" type="button">Confirm</button>
+    </div>
+  </div>
+</div>
+<div id="toasts"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const PAGE = 40;
+const MARKETS = [
+  ["all", "All"],
+  ["perp", "Perps"],
+  ["spot", "Spot"],
+  ["hip3", "HIP-3"],
+];
+const VIEWS = [
+  ["all", "Any"],
+  ["liquid", "Liquid"],
+  ["on", "Enabled"],
+  ["pos", "Positions"],
+];
+const TIPS = {
+  max_leverage: "3 is the ceiling. lower is fine, higher gets thrown out.",
+  max_order_frac: "one order, as a slice of equity. 0.10 = 10%.",
+  max_coin_frac: "biggest one coin is allowed to get.",
+  max_gross_frac: "everything added up. 1 is about 1x equity.",
+  max_daily_loss_frac: "day's down this much -> no new entries, and the guard flattens.",
+  min_liq_distance: "liq price closer than this and it won't open.",
+  max_slippage_bps: "how far the IOC can reach past the mid. bps.",
+  stale_ms: "quote older than this, skip the entry. exits still go.",
+  max_entry_deviation: "limit isn't allowed to sit further off the mid.",
+  book_participation: "don't eat more than this of the size on screen. paper size is a guess from day volume.",
+  max_spread_bps: "wider than this counts as thin. force-on still works, size just gets cut.",
+  min_day_volume_usd: "same idea for dead names.",
+  coins: "blank = whatever you toggled in the table. or type names.",
+  donchian: "lookback. close outside the prior bars.",
+  atr_len: "window for the ATR the stop hangs off.",
+  stop_atr: "stop in ATRs. reduce-only, sits on the exchange.",
+  take_r: "target, multiple of the stop. blank means no target.",
+  risk_frac: "what you lose if the stop fills. it won't take more than 2%.",
+  max_hold_bars: "kick it after this many 15m bars even if the signal's still on.",
+  funding_block: "hourly. longs pay when it's positive. past this, that side is skipped.",
+  fast: "short ema. has to be smaller than the slow one.",
+  slow: "long ema.",
+  signal: "macd signal. the cross is the trigger.",
+  rsi_len: "14 is the usual.",
+  rsi_buy: "buy under this.",
+  rsi_sell: "sell over this.",
+  length: "bollinger lookback.",
+  mult: "band width in stdevs. 2 is the boring default.",
+  account: "0x and 40 hex. the master private key does not come here.",
+  vault: "only if the agent trades a vault. else leave it.",
+  agent_key: "api agent from HL. signs, can't withdraw. sits in memory till you restart.",
+  mode: "paper is a local wallet. testnet/live talk to that network. live also wants a file named ARM in the project dir or Arm won't stick.",
+};
+const RISK_GROUPS = [
+  ["Size", [
+    ["max_leverage", "Max leverage"],
+    ["max_order_frac", "Order size"],
+    ["max_coin_frac", "Per coin"],
+    ["max_gross_frac", "Gross"],
+  ]],
+  ["Loss", [
+    ["max_daily_loss_frac", "Daily loss"],
+    ["min_liq_distance", "Liq distance"],
+  ]],
+  ["Fills", [
+    ["max_slippage_bps", "Slippage, bps"],
+    ["stale_ms", "Stale quote, ms"],
+    ["max_entry_deviation", "Off the mid"],
+    ["book_participation", "Book share"],
+  ]],
+  ["Liquid", [
+    ["max_spread_bps", "Max spread, bps"],
+    ["min_day_volume_usd", "Min day volume"],
+  ]],
+];
+const FLOORS = new Set(["min_liq_distance", "min_day_volume_usd"]);
+
+let token = sessionStorage.getItem("hlbot") || "";
+let state = null;
+let coins = [];
+let prevBid = {};
+let market = "all";
+let filter = "all";
+let sortKey = "day_ntl";
+let sortDir = -1;
+let page = 0;
+let selected = null;
+let tab = "coin";
+let riskDirty = false;
+let modalResolve = null;
+
+function headers() {
+  return { "Authorization": "Bearer " + token, "Content-Type": "application/json" };
+}
+async function api(path, opt) {
+  const res = await fetch(path, Object.assign({ headers: headers() }, opt || {}));
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error || ("HTTP " + res.status));
+  return body;
+}
+function toast(text, kind) {
+  const el = document.createElement("div");
+  el.className = "toast" + (kind ? " " + kind : "");
+  el.textContent = text;
+  $("toasts").appendChild(el);
+  setTimeout(() => el.remove(), 3400);
+}
+function ask(title, body, okLabel) {
+  $("modal-title").textContent = title;
+  $("modal-body").textContent = body;
+  $("modal-ok").textContent = okLabel || "Confirm";
+  $("modal").hidden = false;
+  return new Promise((resolve) => { modalResolve = resolve; });
+}
+function closeModal(v) {
+  $("modal").hidden = true;
+  if (modalResolve) modalResolve(v);
+  modalResolve = null;
+}
+function usd(n) {
+  if (n == null || !isFinite(Number(n))) return "—";
+  const v = Number(n);
+  const a = Math.abs(v);
+  const sign = v < 0 ? "-" : "";
+  if (a >= 1e9) return sign + "$" + (a / 1e9).toFixed(2) + "B";
+  if (a >= 1e6) return sign + "$" + (a / 1e6).toFixed(1) + "M";
+  if (a >= 1e3) return sign + "$" + (a / 1e3).toFixed(1) + "k";
+  return sign + "$" + a.toFixed(0);
+}
+function px(n) {
+  if (n == null || !isFinite(Number(n))) return "—";
+  const v = Number(n);
+  if (v >= 1000) return v.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  if (v >= 1) return v.toLocaleString("en-US", { maximumFractionDigits: 4 });
+  return v.toPrecision(4);
+}
+function money(n) {
+  const v = Number(n);
+  const cls = v < 0 ? "neg" : "pos";
+  const text = (v > 0 ? "+" : "") + v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return { cls, text };
+}
+function age(ms) {
+  if (ms == null) return "no quote";
+  if (ms < 1500) return "live";
+  if (ms < 60000) return Math.round(ms / 1000) + "s old";
+  return Math.round(ms / 60000) + "m old";
+}
+function passes(c) {
+  if (market === "perp" && !(c.market === "perp" && !c.hip3)) return false;
+  if (market === "spot" && c.market !== "spot") return false;
+  if (market === "hip3" && !c.hip3) return false;
+  if (filter === "liquid" && !c.liquid) return false;
+  if (filter === "on" && !c.enabled) return false;
+  if (filter === "pos" && !(Math.abs(c.position) > 0)) return false;
+  return true;
+}
+function inMarket(c) {
+  if (market === "perp") return c.market === "perp" && !c.hip3;
+  if (market === "spot") return c.market === "spot";
+  if (market === "hip3") return !!c.hip3;
+  return true;
+}
+function view() {
+  const q = $("q").value.trim().toLowerCase();
+  let rows = coins.filter((c) => passes(c) && (!q || c.name.toLowerCase().includes(q) || (c.label || "").toLowerCase().includes(q)));
+  rows.sort((a, b) => {
+    const av = a[sortKey];
+    const bv = b[sortKey];
+    if (av == null && bv == null) return a.name.localeCompare(b.name);
+    if (av == null) return 1;
+    if (bv == null) return -1;
+    if (typeof av === "string") return av.localeCompare(bv) * sortDir;
+    return (av - bv) * sortDir;
+  });
+  return rows;
+}
+
+function paintChrome() {
+  const mode = state.mode || "paper";
+  const pill = $("mode");
+  pill.textContent = mode;
+  pill.className = "pill " + (mode === "live" ? "live" : "paper");
+  const arm = $("arm-pill");
+  if (state.halted) { arm.textContent = "halted"; arm.className = "pill halted"; }
+  else if (state.armed) { arm.textContent = "armed"; arm.className = "pill live"; }
+  else { arm.textContent = "safe"; arm.className = "pill paper"; }
+  $("eq").textContent = Number(state.equity).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const pnl = money(state.day_pnl || 0);
+  $("pnl").textContent = pnl.text;
+  $("pnl").className = "num " + pnl.cls;
+  const quote = state.quote_age_ms;
+  $("mids").textContent = quote == null ? "—" : (quote < 1500 ? "live" : age(quote));
+  $("mids").className = "num" + (quote != null && quote > 2000 ? " neg" : "");
+  const beat = state.beat_age_ms;
+  $("loop").textContent = beat == null ? "—" : (beat < 1000 ? "live" : age(beat));
+  $("loop").className = "num" + (beat != null && beat > 1500 ? " neg" : "");
+  $("halt-banner").hidden = !state.halted;
+  const armBtn = $("arm");
+  armBtn.disabled = false;
+  armBtn.textContent = state.armed ? "Disarm" : "Arm";
+  armBtn.className = state.armed ? "btn" : "btn primary";
+  const tape = $("tape");
+  if (tab === "tape" && document.activeElement !== tape) tape.textContent = (state.log || []).join("\n") || "quiet.";
+}
+
+function paintChips() {
+  const host = $("markets");
+  host.innerHTML = "";
+  MARKETS.forEach(([id, label]) => {
+    const count = coins.filter((c) => {
+      const prev = market;
+      market = id;
+      const ok = inMarket(c);
+      market = prev;
+      return ok;
+    }).length;
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = market === id ? "on" : "";
+    b.textContent = label + " " + count;
+    b.onclick = () => { market = id; page = 0; paintChips(); paintTable(); };
+    host.appendChild(b);
+  });
+  const chips = $("chips");
+  chips.innerHTML = "";
+  VIEWS.forEach(([id, label]) => {
+    const count = coins.filter((c) => inMarket(c) && (id === "all" || (id === "liquid" && c.liquid) || (id === "on" && c.enabled) || (id === "pos" && Math.abs(c.position) > 0))).length;
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "chip" + (filter === id ? " on" : "");
+    b.textContent = label + " " + count;
+    b.onclick = () => { filter = id; page = 0; paintChips(); paintTable(); };
+    chips.appendChild(b);
+  });
+}
+
+function rowBits(c) {
+  const bits = [c.market === "spot" ? "spot" : "perp"];
+  if (c.hip3) bits.push(c.dex || "hip3");
+  if (c.delisted) bits.push("delisted");
+  if (c.forced) bits.push("forced");
+  return bits.join(" · ");
+}
+function fillRow(tr, c) {
+  tr.dataset.name = c.name;
+  tr.classList.toggle("sel", c.name === selected);
+  tr.classList.toggle("on", !!c.enabled);
+  const cells = tr.children;
+  cells[0].firstChild.textContent = c.label || c.name;
+  const tag = cells[0].querySelector(".tag");
+  tag.className = "tag" + (c.delisted ? " dead" : "");
+  tag.textContent = rowBits(c);
+  const bid = cells[1];
+  bid.className = "num";
+  if (prevBid[c.name] != null && c.bid != null && c.bid !== prevBid[c.name]) bid.classList.add(c.bid > prevBid[c.name] ? "up" : "down");
+  bid.textContent = px(c.bid);
+  cells[2].textContent = px(c.ask);
+  cells[3].textContent = c.spread_bps == null ? "—" : Number(c.spread_bps).toFixed(2);
+  cells[4].textContent = c.funding == null ? "—" : (c.funding * 1e4).toFixed(2);
+  cells[5].textContent = c.day_ntl == null ? "—" : usd(c.day_ntl);
+  cells[6].textContent = c.position ? String(c.position) : "";
+  const btn = cells[7].firstChild;
+  btn.textContent = c.enabled ? "On" : "Off";
+  btn.onclick = (ev) => { ev.stopPropagation(); toggleCoin(c); };
+  if (c.bid != null) prevBid[c.name] = c.bid;
+}
+function buildRow(c) {
+  const tr = document.createElement("tr");
+  const name = document.createElement("td");
+  name.className = "name";
+  name.appendChild(document.createTextNode(""));
+  const tag = document.createElement("span");
+  tag.className = "tag";
+  name.appendChild(tag);
+  tr.appendChild(name);
+  for (let i = 0; i < 6; i++) {
+    const td = document.createElement("td");
+    td.className = "num";
+    tr.appendChild(td);
+  }
+  const act = document.createElement("td");
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btn quiet";
+  act.appendChild(btn);
+  tr.appendChild(act);
+  tr.onclick = () => { selected = tr.dataset.name; showTab("coin"); paintTable(); paintCoin(); };
+  fillRow(tr, c);
+  return tr;
+}
+function paintTable() {
+  const rows = view();
+  const pages = Math.max(1, Math.ceil(rows.length / PAGE));
+  if (page >= pages) page = pages - 1;
+  const slice = rows.slice(page * PAGE, page * PAGE + PAGE);
+  $("range").textContent = rows.length ? ((page * PAGE + 1) + "–" + (page * PAGE + slice.length) + " of " + rows.length) : "0";
+  $("prev").disabled = page === 0;
+  $("next").disabled = page >= pages - 1;
+  $("empty").hidden = rows.length > 0;
+  const body = $("rows");
+  const existing = [...body.querySelectorAll("tr")];
+  const same = existing.length === slice.length && existing.every((tr, i) => tr.dataset.name === slice[i].name);
+  if (!same) {
+    body.innerHTML = "";
+    slice.forEach((c) => body.appendChild(buildRow(c)));
+  } else {
+    slice.forEach((c, i) => fillRow(existing[i], c));
+  }
+  document.querySelectorAll("th[data-sort]").forEach((th) => {
+    const mark = th.dataset.sort === sortKey ? (sortDir < 0 ? " ↓" : " ↑") : "";
+    const base = th.dataset.label || th.textContent.replace(/ [↓↑]$/, "");
+    th.dataset.label = base;
+    th.textContent = base + mark;
+  });
+}
+
+function paintCoin() {
+  const root = $("pane-coin");
+  const c = coins.find((x) => x.name === selected);
+  root.innerHTML = "";
+  if (!c) {
+    const p = document.createElement("p");
+    p.className = "meta";
+    p.textContent = "click a row. 15m bars show up once the name is on.";
+    root.appendChild(p);
+    return;
+  }
+  const h = document.createElement("h2");
+  h.textContent = c.label || c.name;
+  root.appendChild(h);
+  const meta = document.createElement("div");
+  meta.className = "meta";
+  meta.textContent = [c.market, c.hip3 ? (c.dex || "HIP-3") : "", c.delisted ? "delisted" : "", "max " + c.max_leverage + "x"].filter(Boolean).join(" · ");
+  root.appendChild(meta);
+  const kv = document.createElement("div");
+  kv.className = "kv";
+  [
+    ["Bid", px(c.bid)],
+    ["Ask", px(c.ask)],
+    ["Spread", c.spread_bps == null ? "—" : c.spread_bps + " bps"],
+    ["Funding", c.funding == null ? "—" : (c.funding * 1e4).toFixed(2) + " bps/hr"],
+    ["Day volume", usd(c.day_ntl)],
+    ["Quote", age(c.book_age_ms)],
+    ["15m bars", c.bars ? String(c.bars) : "waiting"],
+    ["Position", c.position ? String(c.position) : "flat"],
+    ["Liquidity", c.liquid ? "passes the floor" : "thin"],
+  ].forEach(([k, v]) => {
+    const a = document.createElement("span");
+    a.textContent = k;
+    const b = document.createElement("b");
+    b.className = "num";
+    b.textContent = v;
+    kv.appendChild(a);
+    kv.appendChild(b);
+  });
+  root.appendChild(kv);
+  const row = document.createElement("div");
+  row.className = "actions";
+  row.style.marginTop = "14px";
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = c.enabled ? "btn" : "btn primary";
+  btn.textContent = c.enabled ? "Disable" : "Enable";
+  btn.onclick = () => toggleCoin(c);
+  row.appendChild(btn);
+  root.appendChild(row);
+}
+
+function showTab(name) {
+  tab = name;
+  document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === name));
+  ["coin", "strategies", "risk", "account", "tape"].forEach((id) => {
+    $("pane-" + id).hidden = id !== name;
+  });
+  if (name === "strategies") paintStrategies();
+  if (name === "risk" && !riskDirty) paintRisk();
+  if (name === "account") paintAccount();
+  if (name === "tape") paintChrome();
+  if (name === "coin") paintCoin();
+}
+
+const BLURB = {
+  ema: "9/21 cross. this one's on.",
+  rsi: "buy washed out, sell stretched.",
+  macd: "line vs signal.",
+  bollinger: "fade a close outside the band.",
+  breakout: "close through the old channel.",
+  rules: "your own conditions. json.",
+};
+const KIND_FIELDS = {
+  breakout: [["donchian", "bars", "1"]],
+  ema: [["fast", "fast", "1"], ["slow", "slow", "1"]],
+  rsi: [["rsi_len", "length", "1"], ["rsi_buy", "buy below", "1"], ["rsi_sell", "sell above", "1"]],
+  macd: [["fast", "fast", "1"], ["slow", "slow", "1"], ["signal", "signal", "1"]],
+  bollinger: [["length", "lookback", "1"], ["mult", "width, stdev", "0.1"]],
+};
+const COMMON_FIELDS = [
+  ["coins", "Coins (blank = enabled list)", ""],
+  ["atr_len", "ATR bars", "1"],
+  ["stop_atr", "Stop, ATRs", "0.1"],
+  ["take_r", "Target, R", "0.1"],
+  ["risk_frac", "Risk", "0.001"],
+  ["max_hold_bars", "Max bars in the trade", "1"],
+  ["funding_block", "Funding cutoff", "0.0001"],
+];
+const SIMPLE_DEFAULTS = {
+  breakout: { donchian: 20 },
+  ema: { fast: 9, slow: 21 },
+  rsi: { rsi_len: 14, rsi_buy: 30, rsi_sell: 70 },
+  macd: { fast: 12, slow: 26, signal: 9 },
+  bollinger: { length: 20, mult: 2 },
+};
+
+function paintStrategies(force) {
+  const root = $("pane-strategies");
+  if (!force && root.contains(document.activeElement)) return;
+  root.innerHTML = "";
+  const intro = document.createElement("div");
+  intro.className = "meta";
+  intro.textContent = "one of these runs. the gate still has to say yes.";
+  root.appendChild(intro);
+  (state.strategies || []).forEach((s) => root.appendChild(stratCard(s)));
+  root.appendChild(builder());
+}
+
+function builder() {
+  const box = document.createElement("div");
+  box.className = "strat";
+  const head = document.createElement("header");
+  const title = document.createElement("strong");
+  title.textContent = "new one";
+  head.appendChild(title);
+  const simple = document.createElement("button");
+  simple.type = "button";
+  simple.className = "btn quiet";
+  simple.textContent = "Simple";
+  const advanced = document.createElement("button");
+  advanced.type = "button";
+  advanced.className = "btn quiet";
+  advanced.textContent = "Advanced";
+  head.appendChild(simple);
+  head.appendChild(advanced);
+  box.appendChild(head);
+  const body = document.createElement("div");
+  box.appendChild(body);
+  function show(mode) {
+    simple.className = "btn" + (mode === "simple" ? " primary" : " quiet");
+    advanced.className = "btn" + (mode === "advanced" ? " primary" : " quiet");
+    body.innerHTML = "";
+    if (mode === "advanced") body.appendChild(advancedForm());
+    else body.appendChild(simpleForm());
+  }
+  simple.onclick = () => show("simple");
+  advanced.onclick = () => show("advanced");
+  show("simple");
+  return box;
+}
+
+function simpleForm() {
+  const form = document.createElement("div");
+  form.appendChild(field("name", "Name", "", "", "letters, digits, _ and -"));
+  const kind = document.createElement("select");
+  kind.dataset.key = "kind";
+  [["ema", "EMA cross"], ["rsi", "RSI"], ["macd", "MACD"], ["bollinger", "Bollinger"], ["breakout", "Donchian"]].forEach(([id, label]) => {
+    const opt = document.createElement("option");
+    opt.value = id;
+    opt.textContent = label;
+    kind.appendChild(opt);
+  });
+  const kindWrap = document.createElement("div");
+  kindWrap.className = "field";
+  const lab = document.createElement("label");
+  lab.textContent = "Kind";
+  kindWrap.appendChild(lab);
+  kindWrap.appendChild(kind);
+  const kindTip = document.createElement("div");
+  kindTip.className = "tip";
+  kindTip.textContent = "these read the 15m bars. advanced is raw json if you want your own rules.";
+  kindWrap.appendChild(kindTip);
+  form.appendChild(kindWrap);
+  const specifics = document.createElement("div");
+  form.appendChild(specifics);
+  function paintKind() {
+    specifics.innerHTML = "";
+    const id = kind.value;
+    const defaults = SIMPLE_DEFAULTS[id] || {};
+    (KIND_FIELDS[id] || []).forEach(([key, label, step]) => {
+      specifics.appendChild(field(key, label, defaults[key], step, TIPS[key]));
+    });
+  }
+  kind.onchange = paintKind;
+  paintKind();
+  COMMON_FIELDS.forEach(([key, label, step]) => {
+    const value = key === "atr_len" ? 14 : key === "stop_atr" ? 1.8 : key === "take_r" ? 3 : key === "risk_frac" ? 0.004 : key === "max_hold_bars" ? 16 : key === "funding_block" ? 0.0003 : "";
+    form.appendChild(field(key, label, value, step, TIPS[key]));
+  });
+  const add = document.createElement("button");
+  add.type = "button";
+  add.className = "btn";
+  add.textContent = "add, left off";
+  add.onclick = () => createSimple(form);
+  form.appendChild(add);
+  return form;
+}
+
+function advancedForm() {
+  const form = document.createElement("div");
+  const area = document.createElement("textarea");
+  area.className = "json";
+  area.dataset.raw = "1";
+  area.value = JSON.stringify({
+    name: "custom_rules",
+    kind: "rules",
+    enabled: false,
+    coins: [],
+    risk_frac: 0.004,
+    stop_atr: 1.5,
+    take_r: 2,
+    max_hold_bars: 12,
+    funding_block: 0.0003,
+    atr_len: 14,
+    rules: [{ side: "buy", when: "close_gt_donchian_high", donchian: 20 }],
+  }, null, 2);
+  const wrap = document.createElement("div");
+  wrap.className = "field";
+  const lab = document.createElement("label");
+  lab.textContent = "json";
+  wrap.appendChild(lab);
+  wrap.appendChild(area);
+  const tip = document.createElement("div");
+  tip.className = "tip";
+  tip.textContent = "whole thing as json. rules are donchian breaks. size still goes through the gate.";
+  wrap.appendChild(tip);
+  form.appendChild(wrap);
+  const add = document.createElement("button");
+  add.type = "button";
+  add.className = "btn";
+  add.textContent = "add, left off";
+  add.onclick = () => createRaw(area.value);
+  form.appendChild(add);
+  return form;
+}
+
+function field(key, label, value, step, tip) {
+  const wrap = document.createElement("div");
+  wrap.className = "field";
+  const lab = document.createElement("label");
+  lab.textContent = label;
+  const input = document.createElement("input");
+  input.dataset.key = key;
+  const numeric = typeof value === "number";
+  input.type = numeric ? "number" : "text";
+  if (step) input.step = step;
+  input.value = value == null ? "" : value;
+  wrap.appendChild(lab);
+  wrap.appendChild(input);
+  if (tip) {
+    const bubble = document.createElement("div");
+    bubble.className = "tip";
+    bubble.textContent = tip;
+    wrap.appendChild(bubble);
+  }
+  return wrap;
+}
+
+function stratCard(s) {
+  const card = document.createElement("article");
+  card.className = "strat";
+  card.dataset.original = JSON.stringify(s);
+  const head = document.createElement("header");
+  const title = document.createElement("strong");
+  title.textContent = s.name;
+  const kind = document.createElement("span");
+  kind.className = "tag";
+  kind.textContent = s.kind;
+  head.appendChild(title);
+  head.appendChild(kind);
+  card.appendChild(head);
+  if (s.kind === "rules") {
+    const area = document.createElement("textarea");
+    area.className = "json";
+    area.dataset.raw = "1";
+    area.value = JSON.stringify(s, null, 2);
+    card.appendChild(area);
+  } else {
+    const on = document.createElement("label");
+    on.className = "checks";
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.dataset.key = "enabled";
+    box.checked = !!s.enabled;
+    on.appendChild(box);
+    on.appendChild(document.createTextNode("enabled"));
+    card.appendChild(on);
+    card.appendChild(field("coins", "Coins (blank = enabled list)", (s.coins || []).join(", "), "", TIPS.coins));
+    (KIND_FIELDS[s.kind] || []).forEach(([key, label, step]) => {
+      card.appendChild(field(key, label, s[key], step, TIPS[key]));
+    });
+    COMMON_FIELDS.slice(1).forEach(([key, label, step]) => {
+      card.appendChild(field(key, label, s[key], step, TIPS[key]));
+    });
+  }
+  const row = document.createElement("div");
+  row.className = "actions";
+  const use = document.createElement("button");
+  use.type = "button";
+  use.className = s.enabled ? "btn primary" : "btn";
+  use.textContent = s.enabled ? "In use" : "Use";
+  use.disabled = !!s.enabled;
+  use.onclick = () => useStrat(s.name);
+  const save = document.createElement("button");
+  save.type = "button";
+  save.className = "btn";
+  save.textContent = "Save";
+  save.onclick = () => saveStrat(card);
+  const del = document.createElement("button");
+  del.type = "button";
+  del.className = "btn quiet";
+  del.textContent = "Delete";
+  del.onclick = () => deleteStrat(s.name);
+  row.appendChild(use);
+  row.appendChild(save);
+  row.appendChild(del);
+  card.appendChild(row);
+  if (BLURB[s.kind]) {
+    const note = document.createElement("div");
+    note.className = "meta";
+    note.textContent = BLURB[s.kind];
+    card.insertBefore(note, card.children[1]);
+  }
+  return card;
+}
+
+async function saveStrat(card) {
+  try {
+    let body;
+    const raw = card.querySelector("[data-raw]");
+    if (raw) body = JSON.parse(raw.value);
+    else {
+      body = JSON.parse(card.dataset.original);
+      card.querySelectorAll("[data-key]").forEach((el) => {
+        const k = el.dataset.key;
+        if (el.type === "checkbox") body[k] = el.checked;
+        else if (k === "coins") body[k] = el.value.split(",").map((x) => x.trim()).filter(Boolean);
+        else body[k] = el.type === "number" ? Number(el.value) : el.value;
+      });
+    }
+    await api("/api/strategies", { method: "POST", body: JSON.stringify(body) });
+    toast("saved " + body.name);
+    await tick();
+    paintStrategies(true);
+  } catch (err) {
+    toast(err.message, "bad");
+  }
+}
+async function deleteStrat(name) {
+  const ok = await ask("Delete " + name, "won't ask this one for trades anymore.", "Delete");
+  if (!ok) return;
+  try {
+    await api("/api/strategies/" + encodeURIComponent(name), { method: "DELETE" });
+    toast("deleted " + name);
+    await tick();
+    paintStrategies(true);
+  } catch (err) { toast(err.message, "bad"); }
+}
+async function useStrat(name) {
+  try {
+    await api("/api/strategies/select", { method: "POST", body: JSON.stringify({ name }) });
+    toast("using " + name);
+    await tick();
+    paintStrategies(true);
+  } catch (err) { toast(err.message, "bad"); }
+}
+async function createSimple(form) {
+  const body = { enabled: false, coins: [] };
+  form.querySelectorAll("[data-key]").forEach((el) => {
+    const k = el.dataset.key;
+    if (k === "kind" || k === "name") body[k] = el.value.trim();
+    else if (k === "coins") body[k] = el.value.split(",").map((x) => x.trim()).filter(Boolean);
+    else body[k] = el.type === "number" ? Number(el.value) : el.value;
+  });
+  await postStrat(body);
+}
+async function createRaw(text) {
+  try {
+    await postStrat(JSON.parse(text));
+  } catch (err) { toast(err.message, "bad"); }
+}
+async function postStrat(body) {
+  try {
+    await api("/api/strategies", { method: "POST", body: JSON.stringify(body) });
+    toast("added " + body.name);
+    await tick();
+    paintStrategies(true);
+  } catch (err) { toast(err.message, "bad"); }
+}
+
+function paintRisk() {
+  const root = $("pane-risk");
+  if (riskDirty && root.contains(document.activeElement)) return;
+  root.innerHTML = "";
+  const caps = (state && state.ceilings) || {};
+  const cur = (state && state.risk) || {};
+  const note = document.createElement("div");
+  note.className = "meta";
+  note.textContent = "you can only tighten what's baked in. looser numbers get bounced and the old limits stay.";
+  root.appendChild(note);
+  RISK_GROUPS.forEach(([title, rows]) => {
+    const h = document.createElement("div");
+    h.className = "group-title";
+    h.textContent = title;
+    root.appendChild(h);
+    rows.forEach(([key, label]) => {
+      const wrap = document.createElement("div");
+      wrap.className = "field";
+      const lab = document.createElement("label");
+      lab.textContent = label;
+      const input = document.createElement("input");
+      input.name = key;
+      input.type = "number";
+      input.step = "any";
+      input.value = cur[key] == null ? "" : cur[key];
+      input.oninput = () => { riskDirty = true; caption.textContent = describe(key, input.value, caps[key]); };
+      const caption = document.createElement("div");
+      caption.className = "hint";
+      caption.textContent = describe(key, cur[key], caps[key]);
+      wrap.appendChild(lab);
+      wrap.appendChild(input);
+      wrap.appendChild(caption);
+      if (TIPS[key]) {
+        const bubble = document.createElement("div");
+        bubble.className = "tip";
+        bubble.textContent = TIPS[key];
+        wrap.appendChild(bubble);
+      }
+      root.appendChild(wrap);
+    });
+  });
+  const save = document.createElement("button");
+  save.type = "button";
+  save.className = "btn primary";
+  save.textContent = "Save limits";
+  save.onclick = saveRisk;
+  root.appendChild(save);
+  const extra = document.createElement("div");
+  extra.className = "actions";
+  extra.style.marginTop = "12px";
+  const reload = document.createElement("button");
+  reload.type = "button";
+  reload.className = "btn quiet";
+  reload.textContent = "Reload markets";
+  reload.onclick = async () => {
+    try { const r = await api("/api/catalog/reload", { method: "POST" }); toast("markets " + r.coins); tick(); }
+    catch (err) { toast(err.message, "bad"); }
+  };
+  const liq = document.createElement("button");
+  liq.type = "button";
+  liq.className = "btn";
+  liq.textContent = "Enable liquid";
+  liq.onclick = enableLiquid;
+  extra.appendChild(liq);
+  extra.appendChild(reload);
+  root.appendChild(extra);
+}
+function describe(key, value, cap) {
+  const n = Number(value);
+  let shown = "";
+  if (isFinite(n)) {
+    if (key.endsWith("_frac") || key === "min_liq_distance" || key === "max_entry_deviation" || key === "book_participation") shown = (n * 100).toFixed(2) + "%";
+    else if (key === "min_day_volume_usd") shown = usd(n);
+    else shown = String(n);
+  }
+  if (cap == null) return shown;
+  const edge = FLOORS.has(key) ? "floor " + cap : "ceiling " + cap;
+  return shown ? shown + " · " + edge : edge;
+}
+async function saveRisk() {
+  const body = {};
+  $("pane-risk").querySelectorAll("input[name]").forEach((el) => { body[el.name] = Number(el.value); });
+  try {
+    await api("/api/risk", { method: "POST", body: JSON.stringify(body) });
+    riskDirty = false;
+    toast("limits saved");
+    await tick();
+    paintRisk();
+  } catch (err) { toast(err.message, "bad"); }
+}
+
+async function toggleCoin(c) {
+  try {
+    let force = false;
+    if (!c.enabled && c.delisted) { toast(c.name + " is delisted", "bad"); return; }
+    if (!c.enabled && !c.liquid) {
+      force = await ask(c.label || c.name, "thin book. size gets cut harder. the account caps don't move.", "Enable anyway");
+      if (!force) return;
+    }
+    await api("/api/coins/enable", { method: "POST", body: JSON.stringify({ name: c.name, on: !c.enabled, force }) });
+    toast((c.enabled ? "off " : "on ") + (c.label || c.name));
+    await tick();
+  } catch (err) { toast(err.message, "bad"); }
+}
+async function enableLiquid() {
+  const n = coins.filter((c) => c.liquid && !c.enabled).length;
+  const ok = await ask("Enable liquid markets", n + " names clear the spread / volume cut. thin ones stay off.", "Enable " + n);
+  if (!ok) return;
+  try {
+    const r = await api("/api/coins/enable-liquid", { method: "POST" });
+    toast("enabled " + r.added);
+    tick();
+  } catch (err) { toast(err.message, "bad"); }
+}
+
+function paintAccount() {
+  const root = $("pane-account");
+  if (root.contains(document.activeElement)) return;
+  const link = (state && state.link) || {};
+  root.innerHTML = "";
+  const note = document.createElement("div");
+  note.className = "meta";
+  if (link.key_loaded) {
+    note.textContent = "agent " + (link.agent || "") + " on " + (link.address || "") + (link.arm_file ? ". ARM file is there." : ". live still needs a file named ARM or orders won't leave.");
+  } else {
+    note.textContent = "paper fills stay on this box. testnet and live read the account. master key stays offline.";
+  }
+  root.appendChild(note);
+  const modeWrap = document.createElement("div");
+  modeWrap.className = "field";
+  const modeLab = document.createElement("label");
+  modeLab.textContent = "Mode";
+  const mode = document.createElement("select");
+  mode.dataset.key = "mode";
+  [["paper", "Paper"], ["testnet", "Testnet"], ["live", "Live"]].forEach(([id, label]) => {
+    const opt = document.createElement("option");
+    opt.value = id;
+    opt.textContent = label;
+    mode.appendChild(opt);
+  });
+  mode.value = (state && state.mode) || "paper";
+  modeWrap.appendChild(modeLab);
+  modeWrap.appendChild(mode);
+  const modeTip = document.createElement("div");
+  modeTip.className = "tip";
+  modeTip.textContent = TIPS.mode;
+  modeWrap.appendChild(modeTip);
+  root.appendChild(modeWrap);
+  root.appendChild(field("account", "Account address", link.address || "", "", TIPS.account));
+  root.appendChild(field("vault", "Vault address, optional", link.vault || "", "", TIPS.vault));
+  const secret = field("agent_key", "Agent key", "", "", TIPS.agent_key);
+  secret.querySelector("input").type = "password";
+  secret.querySelector("input").autocomplete = "off";
+  root.appendChild(secret);
+  const go = document.createElement("button");
+  go.type = "button";
+  go.className = "btn primary";
+  go.textContent = "Connect";
+  go.onclick = () => connectAccount(root);
+  root.appendChild(go);
+}
+
+async function connectAccount(root) {
+  const body = { mode: "paper", account: "", vault: "", agent_key: "" };
+  root.querySelectorAll("[data-key]").forEach((el) => { body[el.dataset.key] = el.value.trim(); });
+  if (body.mode !== "paper") {
+    const ok = await ask(
+      "Connect " + body.mode,
+      "key stays in this process. live still waits for Arm, and for an ARM file.",
+      "Connect"
+    );
+    if (!ok) return;
+  }
+  try {
+    const res = await api("/api/account", { method: "POST", body: JSON.stringify(body) });
+    toast(res.mode === "paper" ? "paper wallet" : ("connected " + res.mode));
+    await tick();
+    paintAccount();
+  } catch (err) { toast(err.message, "bad"); }
+}
+
+async function tick() {
+  try {
+    state = await api("/api/state");
+    coins = await api("/api/coins");
+    $("gate").hidden = true;
+    $("desk").hidden = false;
+    paintChrome();
+    paintChips();
+    paintTable();
+    if (tab === "coin") paintCoin();
+  } catch (err) {
+    if (String(err.message).includes("unauthorized") || String(err.message).includes("401")) {
+      $("desk").hidden = true;
+      $("gate").hidden = false;
+      $("login-err").textContent = "bad token.";
+      return;
+    }
+    toast(err.message, "bad");
+  }
+}
+
+$("login-form").onsubmit = async (ev) => {
+  ev.preventDefault();
+  token = $("token").value.trim();
+  sessionStorage.setItem("hlbot", token);
+  $("login-err").textContent = "";
+  await tick();
+};
+$("modal-cancel").onclick = () => closeModal(false);
+$("modal-ok").onclick = () => closeModal(true);
+$("prev").onclick = () => { page = Math.max(0, page - 1); paintTable(); $("scroll").scrollTop = 0; };
+$("next").onclick = () => { page += 1; paintTable(); $("scroll").scrollTop = 0; };
+$("q").oninput = () => { page = 0; paintTable(); };
+document.querySelectorAll("th[data-sort]").forEach((th) => {
+  th.onclick = () => {
+    const key = th.dataset.sort;
+    if (sortKey === key) sortDir *= -1;
+    else { sortKey = key; sortDir = key === "name" ? 1 : -1; }
+    page = 0;
+    paintTable();
+  };
+});
+document.querySelectorAll(".tabs button").forEach((b) => { b.onclick = () => showTab(b.dataset.tab); });
+$("arm").onclick = async () => {
+  if (state && state.armed) {
+    if (!await ask("Disarm", "new entries stop. open stuff stays until you flatten or a stop fills.", "Disarm")) return;
+    try { await api("/api/disarm", { method: "POST" }); toast("disarmed"); tick(); }
+    catch (err) { toast(err.message, "bad"); }
+    return;
+  }
+  const mode = state ? state.mode : "paper";
+  const body = mode === "live"
+    ? "live orders get signed and sent. the agent still can't withdraw."
+    : "enabled coins can open. paper fills stay in the local wallet.";
+  if (!await ask("Arm " + mode, body, "Arm")) return;
+  try { await api("/api/arm", { method: "POST" }); toast("armed"); tick(); }
+  catch (err) { toast(err.message, "bad"); }
+};
+$("halt").onclick = async () => {
+  await api("/api/halt", { method: "POST" });
+  toast("halted");
+  tick();
+};
+$("resume").onclick = async () => {
+  await api("/api/resume", { method: "POST" });
+  toast("resumed");
+  tick();
+};
+$("flatten").onclick = async () => {
+  if (!await ask("Flatten", "close what's open. reduce-only.", "Flatten")) return;
+  try { await api("/api/flatten", { method: "POST" }); toast("flatten sent"); tick(); }
+  catch (err) { toast(err.message, "bad"); }
+};
+document.addEventListener("keydown", (ev) => {
+  if (ev.key === "/" && document.activeElement && document.activeElement.tagName !== "INPUT" && document.activeElement.tagName !== "TEXTAREA") {
+    ev.preventDefault();
+    $("q").focus();
+  }
+  if (ev.key === "Escape" && !$("modal").hidden) closeModal(false);
+});
+
+if (token) tick();
+// screen only. the loop that can send orders is the python clock
+setInterval(() => { if (token && !$("desk").hidden) tick(); }, 1000);
+</script>
+</body>
+</html>

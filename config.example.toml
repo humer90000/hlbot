@@ -1,0 +1,93 @@
+# paper. mainnet prices, fills stay local.
+mode = "paper"
+host = "127.0.0.1"
+port = 8787
+equity = 10000
+arm_file = "ARM"
+account = ""
+vault = ""
+
+[risk]
+max_leverage = 2
+max_order_frac = 0.10
+max_coin_frac = 0.25
+max_gross_frac = 1
+max_daily_loss_frac = 0.03
+max_slippage_bps = 8
+min_liq_distance = 0.15
+stale_ms = 1500
+max_entry_deviation = 0.01
+book_participation = 0.10
+max_spread_bps = 8
+min_day_volume_usd = 5000000
+
+[[strategy]]
+name = "ema"
+kind = "ema"
+enabled = true
+coins = []
+fast = 9
+slow = 21
+atr_len = 14
+stop_atr = 1.8
+take_r = 3
+risk_frac = 0.004
+max_hold_bars = 16
+funding_block = 0.0003
+
+[[strategy]]
+name = "rsi"
+kind = "rsi"
+enabled = false
+coins = []
+rsi_len = 14
+rsi_buy = 30
+rsi_sell = 70
+atr_len = 14
+stop_atr = 1.5
+take_r = 2
+risk_frac = 0.004
+max_hold_bars = 16
+funding_block = 0.0003
+
+[[strategy]]
+name = "macd"
+kind = "macd"
+enabled = false
+coins = []
+fast = 12
+slow = 26
+signal = 9
+atr_len = 14
+stop_atr = 1.8
+take_r = 3
+risk_frac = 0.004
+max_hold_bars = 16
+funding_block = 0.0003
+
+[[strategy]]
+name = "bollinger"
+kind = "bollinger"
+enabled = false
+coins = []
+length = 20
+mult = 2
+atr_len = 14
+stop_atr = 1.4
+take_r = 2
+risk_frac = 0.004
+max_hold_bars = 16
+funding_block = 0.0003
+
+[[strategy]]
+name = "donchian"
+kind = "breakout"
+enabled = false
+coins = []
+donchian = 20
+atr_len = 14
+stop_atr = 1.8
+take_r = 3
+risk_frac = 0.004
+max_hold_bars = 16
+funding_block = 0.0003
