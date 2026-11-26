@@ -186,6 +186,79 @@ def test_sim_fills_at_the_touch_partials_and_ignores_a_resting_limit():
     assert broker.cash == Decimal("10010")
 
 
+def test_paper_stop_and_take_fill_when_price_trades_through(session):
+    session.books["BTC"] = _break_book()
+    session.now_ms = 5_000
+    session.enabled.add("BTC")
+    session.armed = True
+    session.step()
+    assert "BTC" in session.broker.pos
+    side, stop_px, take_px = session.broker.exits["BTC"]
+    assert side == "buy" and take_px > stop_px
+
+    between = (stop_px + take_px) / 2
+    session.books["BTC"] = book(bid=float(between), ask=float(between) + 0.1, mark=float(between))
+    session.now_ms = 6_000
+    session.step()
+    assert "BTC" in session.broker.pos
+
+    session.books["BTC"] = book(bid=float(stop_px) - 5, ask=float(stop_px) - 4, mark=float(stop_px) - 5)
+    session.now_ms = 7_000
+    session.step()
+    assert "BTC" not in session.broker.pos
+    assert "BTC" not in session.broker.exits
+    stopped = session.broker.cash
+    assert stopped < Decimal(10_000)
+    assert any(body.startswith("stop ") for _, kind, _, body in session.journal.recent() if kind == "fill")
+
+    again = _break_book()
+    again.bar_ts = 8_000
+    again.book_ts = 8_000
+    session.books["BTC"] = again
+    session.now_ms = 8_000
+    session.settled.clear()
+    session.step()
+    _, _, take_px = session.broker.exits["BTC"]
+    session.books["BTC"] = book(bid=float(take_px) + 2, ask=float(take_px) + 3, mark=float(take_px) + 2)
+    session.now_ms = 9_000
+    session.step()
+    assert "BTC" not in session.broker.pos
+    assert session.broker.cash > stopped
+    assert session.broker.cash > Decimal(10_000)
+
+
+def test_a_short_stop_buys_back():
+    broker = SimBroker(10_000)
+    broker.pos["BTC"] = [Decimal("-1"), Decimal("100")]
+    broker.arm_exit(
+        OrderPlan(
+            coin="BTC",
+            asset=0,
+            market="perp",
+            side="sell",
+            sz=Decimal("1"),
+            limit_px=Decimal("100"),
+            tif="Ioc",
+            reduce_only=False,
+            cloid=make_cloid("short"),
+            stop_px=Decimal("110"),
+            take_px=Decimal("80"),
+            purpose="open",
+            strategy="t",
+            hl_coin="BTC",
+            sz_decimals=5,
+        )
+    )
+    quiet = book(bid=105, ask=106)
+    assert broker.check_exits({"BTC": quiet}, coins(), 1) == []
+    assert "BTC" in broker.pos
+    hit = book(bid=111, ask=112)
+    kind, fill = broker.check_exits({"BTC": hit}, coins(), 2)[0]
+    assert kind == "stop" and fill.px == 112
+    assert "BTC" not in broker.pos
+    assert broker.cash == Decimal("9988")
+
+
 def test_wire_groups_the_stop_with_the_entry():
     plan = OrderPlan(
         coin="BTC",

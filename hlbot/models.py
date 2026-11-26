@@ -77,6 +77,7 @@ class Book:
     highs: tuple[float, ...] = ()
     lows: tuple[float, ...] = ()
     closes: tuple[float, ...] = ()
+    synthetic: bool = False
 
     @property
     def mid(self) -> float:

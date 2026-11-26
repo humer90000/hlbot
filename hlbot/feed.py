@@ -36,18 +36,20 @@ def _book(ctx, now_ms: int):
         return None
     if mid <= 0:
         return None
+    # spot ctx has a mid and no impact. treating that as a zero spread marks fat names liquid
+    bid = ask = None
     impact = ctx.get("impactPxs") or [None, None]
     try:
-        bid = float(impact[0]) if impact and impact[0] else mid
-        ask = float(impact[1]) if impact and impact[1] else mid
+        if impact[0] not in (None, "") and impact[1] not in (None, ""):
+            bid = float(impact[0])
+            ask = float(impact[1])
     except (TypeError, ValueError, IndexError):
-        bid, ask = mid, mid
-    if ask < bid:
+        bid = ask = None
+    synthetic = not (bid and ask and bid > 0 and ask > 0)
+    if synthetic:
+        bid = ask = mid
+    elif ask < bid:
         bid, ask = ask, bid
-    if bid <= 0:
-        bid = mid
-    if ask <= 0:
-        ask = mid
     try:
         day = float(ctx.get("dayNtlVlm") or 0)
     except (TypeError, ValueError):
@@ -70,6 +72,7 @@ def _book(ctx, now_ms: int):
         day_ntl=day,
         book_ts=now_ms,
         bar_ts=0,
+        synthetic=synthetic,
     )
 
 

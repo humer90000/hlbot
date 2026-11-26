@@ -102,9 +102,25 @@ def test_paper_connect_clears_a_key_and_a_bad_address_fails(session):
         assert str(exc) == "account"
 
 
+def test_a_mid_only_spot_is_not_liquid():
+    from hlbot.config import resolve_limits
+    from hlbot.feed import books_from_spot
+    from hlbot.risk import _liquid
+
+    books = books_from_spot(
+        [{"coin": "@1", "midPx": "10", "markPx": "10", "dayNtlVlm": "9000000"}],
+        1_000,
+    )
+    spot = books["@1"]
+    assert spot.synthetic and spot.bid == spot.ask
+    assert _liquid(spot, resolve_limits({})) is False
+
+
 def test_touch_top_writes_the_live_bid(session):
     session.books["BTC"] = book()
+    session.books["BTC"].synthetic = True
     assert session.touch_top("BTC", [{"px": "101", "sz": "2"}, {"px": "101.2", "sz": "3"}], 50)
+    assert session.books["BTC"].synthetic is False
     book_ = session.books["BTC"]
     assert book_.bid == 101
     assert book_.ask == 101.2
@@ -121,6 +137,16 @@ def test_touch_top_writes_the_live_bid(session):
     assert session.books["BTC"].bar_ts == 20
     assert session.push_candle("BTC", {"t": 30, "h": "6", "l": "4", "c": "5", "i": "1h"}) is False
     assert session.books["BTC"].bar_ts == 20
+
+
+def test_a_live_top_survives_the_mid_refresh(session):
+    session.books["BTC"] = book()
+    assert session.touch_top("BTC", [{"px": "101", "sz": "2"}, {"px": "101.2", "sz": "3"}], 50)
+    fresh = book(bid=50, ask=50)
+    fresh.synthetic = True
+    session.ingest_books({"BTC": fresh})
+    kept = session.books["BTC"]
+    assert (kept.bid, kept.ask, kept.synthetic) == (101, 101.2, False)
 
 
 def test_interval_switch_drops_the_old_bars(session):

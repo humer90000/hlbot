@@ -179,6 +179,8 @@ class Session:
         self.beat_ms = self.now_ms
         self._write_state()
         self._roll_holds()
+        if self.mode in ("paper", "backtest"):
+            self._fire_exits()
         if flatten_now:
             intents = flatten_intents(self._positions(), "guard", self.now_ms)
         else:
@@ -217,7 +219,7 @@ class Session:
             out.append(result)
             if isinstance(result, Reject):
                 # stale / not armed can clear later in the same bar. the rest will not.
-                if result.reason not in ("not armed", "halted", "stale book", "desynced"):
+                if result.reason not in ("not armed", "halted", "stale book", "desynced", "no book"):
                     self.settled.add(stamp)
                 if self.said.get(stamp) != result.reason:
                     self.said[stamp] = result.reason
@@ -239,7 +241,14 @@ class Session:
                 else:
                     self.note(f"fill {result.coin} {fmt_num(fill.sz)} @ {fmt_num(fill.px)}")
                     self._journal("fill", result.coin, f"{fill.sz}@{fill.px}")
+                    if result.stop_px is not None and not result.reduce_only:
+                        self.broker.arm_exit(result)
         return out
+
+    def _fire_exits(self):
+        for kind, fill in self.broker.check_exits(self.books, self.coins, self.now_ms):
+            self.note(f"{kind} {fill.coin} {fmt_num(fill.sz)} @ {fmt_num(fill.px)}")
+            self._journal("fill", fill.coin, f"{kind} {fill.sz}@{fill.px}")
 
     def _execute(self, plan, book, coin):
         action = build_action(plan)
@@ -468,7 +477,7 @@ class Session:
     def _liquid(self, name) -> bool:
         coin = self.coins.get(name)
         book = self.books.get(name)
-        if coin is None or coin.delisted or book is None:
+        if coin is None or coin.delisted or book is None or book.synthetic:
             return False
         return (
             book.spread_bps <= self.limits.max_spread_bps
@@ -543,6 +552,14 @@ class Session:
                     book.lows = prev.lows
                     book.closes = prev.closes
                     book.bar_ts = prev.bar_ts
+                if prev and not prev.synthetic and book.synthetic:
+                    book.bid = prev.bid
+                    book.ask = prev.ask
+                    book.bid_sz = prev.bid_sz
+                    book.ask_sz = prev.ask_sz
+                    book.mark = prev.mark
+                    book.book_ts = prev.book_ts
+                    book.synthetic = False
                 self.books[name] = book
 
     def touch_mids(self, mids: dict, now_ms: int) -> int:
@@ -613,6 +630,7 @@ class Session:
                 book.ask_sz = ask_sz
             book.mark = (bid + ask) / 2
             book.book_ts = now_ms
+            book.synthetic = False
             self.mid_ms = now_ms
             return True
 
@@ -746,7 +764,7 @@ class Session:
                         "liquid": self._liquid(name),
                         "bid": book.bid if book else None,
                         "ask": book.ask if book else None,
-                        "spread_bps": round(book.spread_bps, 2) if book else None,
+                        "spread_bps": None if book is None or book.synthetic else round(book.spread_bps, 2),
                         "funding": book.funding if book else None,
                         "day_ntl": book.day_ntl if book else None,
                         "position": float(pos),

@@ -25,6 +25,8 @@ def _loss(account: Account, limits) -> bool:
 
 
 def _liquid(book: Book, limits) -> bool:
+    if book.synthetic:
+        return False
     return book.spread_bps <= limits.max_spread_bps and book.day_ntl >= limits.min_day_volume_usd
 
 
@@ -45,6 +47,8 @@ def decide(intent, book, coin, account, gate, now_ms, mids) -> OrderPlan | Rejec
         return Reject(name, "purpose")
     if intent.side not in ("buy", "sell"):
         return Reject(name, "side")
+    if intent.purpose == "open" and book.synthetic:
+        return Reject(name, "no book")
 
     limits = gate.limits
     mid = (D(book.bid) + D(book.ask)) / 2

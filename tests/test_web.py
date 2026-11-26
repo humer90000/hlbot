@@ -3,6 +3,10 @@ def test_page_and_auth(client):
     assert page.status_code == 200
     assert "flatten" in page.text
     assert client.get("/api/state").status_code == 401
+    for path in ("/docs", "/redoc", "/openapi.json"):
+        hidden = client.get(path)
+        assert hidden.status_code == 401
+        assert "openapi" not in hidden.text
 
 
 def test_state_does_not_leak_the_agent_key(client, session):

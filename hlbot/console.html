@@ -515,9 +515,13 @@ function usd(n) {
 function px(n) {
   if (n == null || !isFinite(Number(n))) return "—";
   const v = Number(n);
-  if (v >= 1000) return v.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
-  if (v >= 1) return v.toLocaleString("en-US", { maximumFractionDigits: 4 });
-  return v.toPrecision(4);
+  const sign = v < 0 ? "-" : "";
+  const a = Math.abs(v);
+  if (a >= 1000) return sign + a.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  if (a >= 1) return sign + a.toLocaleString("en-US", { maximumFractionDigits: 4 });
+  if (a === 0) return "0";
+  if (a >= 0.0001) return sign + a.toPrecision(4);
+  return sign + a.toFixed(10).replace(/0+$/, "");
 }
 function money(n) {
   const v = Number(n);
@@ -656,9 +660,10 @@ function fillRow(tr, c) {
   bid.className = "num";
   if (prevBid[c.name] != null && c.bid != null && c.bid !== prevBid[c.name]) bid.classList.add(c.bid > prevBid[c.name] ? "up" : "down");
   bid.textContent = px(c.bid);
-  cells[2].textContent = px(c.ask);
+  const midOnly = c.spread_bps == null && c.bid != null;
+  cells[2].textContent = midOnly ? "—" : px(c.ask);
   cells[3].textContent = c.spread_bps == null ? "—" : Number(c.spread_bps).toFixed(2);
-  cells[4].textContent = c.funding == null ? "—" : (c.funding * 1e4).toFixed(2);
+  cells[4].textContent = c.market === "spot" || c.funding == null ? "—" : (c.funding * 1e4).toFixed(2);
   cells[5].textContent = c.day_ntl == null ? "—" : usd(c.day_ntl);
   cells[6].textContent = c.position ? String(c.position) : "";
   const btn = cells[7].firstChild;
@@ -738,14 +743,14 @@ function paintCoin() {
   kv.className = "kv";
   [
     ["Bid", px(c.bid)],
-    ["Ask", px(c.ask)],
+    ["Ask", c.spread_bps == null && c.bid != null ? "—" : px(c.ask)],
     ["Spread", c.spread_bps == null ? "—" : c.spread_bps + " bps"],
-    ["Funding", c.funding == null ? "—" : (c.funding * 1e4).toFixed(2) + " bps/hr"],
+    ["Funding", c.market === "spot" || c.funding == null ? "—" : (c.funding * 1e4).toFixed(2) + " bps/hr"],
     ["Day volume", usd(c.day_ntl)],
     ["Quote", age(c.book_age_ms)],
     [(state.interval || "15m") + " bars", c.bars ? String(c.bars) : "waiting"],
     ["Position", c.position ? String(c.position) : "flat"],
-    ["Liquidity", c.liquid ? "passes the floor" : "thin"],
+    ["Liquidity", c.spread_bps == null && c.bid != null ? "mid only" : (c.liquid ? "passes the floor" : "thin")],
   ].forEach(([k, v]) => {
     const a = document.createElement("span");
     a.textContent = k;
@@ -1249,7 +1254,11 @@ async function toggleCoin(c) {
     let force = false;
     if (!c.enabled && c.delisted) { toast(c.name + " is delisted", "bad"); return; }
     if (!c.enabled && !c.liquid) {
-      force = await ask(c.label || c.name, "thin book. size gets cut harder. the account caps don't move.", "Enable anyway");
+      const midOnly = c.spread_bps == null && c.bid != null;
+      const body = midOnly
+        ? "only a mid so far. nothing opens until a real bid and ask show up."
+        : "thin book. size gets cut harder. the account caps don't move.";
+      force = await ask(c.label || c.name, body, "Enable anyway");
       if (!force) return;
     }
     await api("/api/coins/enable", { method: "POST", body: JSON.stringify({ name: c.name, on: !c.enabled, force }) });
@@ -1378,6 +1387,7 @@ $("login-form").onsubmit = async (ev) => {
 };
 $("modal-cancel").onclick = () => closeModal(false);
 $("modal-ok").onclick = () => closeModal(true);
+$("modal").onclick = (ev) => { if (ev.target === $("modal")) closeModal(false); };
 $("prev").onclick = () => { page = Math.max(0, page - 1); paintTable(); $("scroll").scrollTop = 0; };
 $("next").onclick = () => { page += 1; paintTable(); $("scroll").scrollTop = 0; };
 $("q").oninput = () => { page = 0; paintTable(); };
@@ -1426,11 +1436,14 @@ $("flatten").onclick = async () => {
   catch (err) { toast(err.message, "bad"); }
 };
 document.addEventListener("keydown", (ev) => {
+  if (!$("modal").hidden) {
+    if (ev.key === "Escape") closeModal(false);
+    return;
+  }
   if (ev.key === "/" && document.activeElement && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName)) {
     ev.preventDefault();
     $("q").focus();
   }
-  if (ev.key === "Escape" && !$("modal").hidden) closeModal(false);
 });
 
 if (token) tick();

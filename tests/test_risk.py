@@ -19,6 +19,18 @@ def _open(**kw):
     return Intent(**base)
 
 
+def test_a_mid_only_book_does_not_open():
+    b = book()
+    b.synthetic = True
+    coin = coins()["BTC"]
+    rej = decide(_open(), b, coin, account(), _gate(forced=("BTC",)), 1_000_000, {"BTC": Decimal(100)})
+    assert rej.reason == "no book"
+    held = account(positions={"BTC": Decimal("0.2")})
+    close = _open(purpose="close", side="sell", qty=0.2, stop_dist=None, take_r=None)
+    done = decide(close, b, coin, held, _gate(), 1_000_000, {"BTC": Decimal(100)})
+    assert done.reduce_only is True
+
+
 def test_open_builds_a_protected_ioc():
     d = decide(_open(), book(), coins()["BTC"], account(), _gate(), 1_000_000, {"BTC": Decimal(100)})
     assert d.purpose == "open"

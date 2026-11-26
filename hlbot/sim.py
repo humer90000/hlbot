@@ -1,7 +1,9 @@
 from dataclasses import dataclass
 from decimal import Decimal
 
+from hlbot.models import OrderPlan
 from hlbot.px import D
+from hlbot.wire import make_cloid
 
 
 @dataclass
@@ -20,6 +22,7 @@ class SimBroker:
         self.spot = {}
         self.seen = set()
         self.resting = {}
+        self.exits = {}
 
     def exposure(self, name, coin) -> Decimal:
         if coin.market == "spot":
@@ -65,7 +68,49 @@ class SimBroker:
         sz = self._apply(plan, sz, touch, coin)
         if sz <= 0:
             return None
+        self._clear_if_flat(plan.coin, coin)
         return Fill(plan.coin, plan.side, sz, touch, plan.cloid)
+
+    def arm_exit(self, plan):
+        if plan.reduce_only or plan.stop_px is None:
+            return
+        take = None if plan.take_px is None else D(plan.take_px)
+        self.exits[plan.coin] = (plan.side, D(plan.stop_px), take)
+
+    def check_exits(self, books, coins, now_ms):
+        # nothing on the exchange is watching these, so the fill has to happen here
+        out = []
+        for name, (side, stop_px, take_px) in list(self.exits.items()):
+            coin = coins.get(name) if coins else None
+            book = books.get(name)
+            if book is None or book.bid <= 0 or book.ask <= 0:
+                continue
+            held = self.exposure(name, coin) if coin is not None else self._perp_sz(name)
+            if held == 0 or (side == "buy" and held < 0) or (side == "sell" and held > 0):
+                self.exits.pop(name, None)
+                continue
+            hit = _exit_hit(side, stop_px, take_px, book)
+            if hit is None:
+                continue
+            kind, close_side, px = hit
+            market = coin.market if coin is not None else "perp"
+            plan = _exit_plan(name, market, close_side, abs(held), px, now_ms, kind)
+            fill = self.submit(plan, book, coin)
+            if fill is None:
+                continue
+            out.append((kind, fill))
+        return out
+
+    def _perp_sz(self, name):
+        row = self.pos.get(name)
+        if not row:
+            return Decimal(0)
+        return row[0]
+
+    def _clear_if_flat(self, name, coin):
+        left = self.exposure(name, coin) if coin is not None else self._perp_sz(name)
+        if left == 0:
+            self.exits.pop(name, None)
 
     def _room(self, plan) -> Decimal:
         row = self.pos.get(plan.coin)
@@ -128,3 +173,39 @@ class SimBroker:
         self.spot[base] = have - sz
         self.cash += sz * px
         return sz
+
+
+def _exit_hit(side, stop_px, take_px, book):
+    bid = D(book.bid)
+    ask = D(book.ask)
+    if side == "buy":
+        if bid <= stop_px:
+            return "stop", "sell", bid
+        if take_px is not None and bid >= take_px:
+            return "take", "sell", bid
+        return None
+    if ask >= stop_px:
+        return "stop", "buy", ask
+    if take_px is not None and ask <= take_px:
+        return "take", "buy", ask
+    return None
+
+
+def _exit_plan(name, market, side, sz, px, now_ms, kind):
+    return OrderPlan(
+        coin=name,
+        asset=0,
+        market=market,
+        side=side,
+        sz=sz,
+        limit_px=px,
+        tif="Ioc",
+        reduce_only=True,
+        cloid=make_cloid("exit", name, now_ms, kind),
+        stop_px=None,
+        take_px=None,
+        purpose="close",
+        strategy=kind,
+        hl_coin=name,
+        sz_decimals=8,
+    )

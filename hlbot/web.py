@@ -11,17 +11,19 @@ def _page() -> str:
 
 
 def create_app(session, token: str, reload_fn=None) -> FastAPI:
-    app = FastAPI()
+    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
     @app.middleware("http")
     async def auth(request: Request, call_next):
-        if request.url.path in ("/", "/favicon.ico"):
+        path = request.url.path
+        if path in ("/", "/favicon.ico"):
             return await call_next(request)
-        if request.url.path.startswith("/api/"):
+        if path.startswith("/api/"):
             got = request.headers.get("authorization", "")
             if got != "Bearer " + token:
                 return JSONResponse({"error": "unauthorized"}, status_code=401)
-        return await call_next(request)
+            return await call_next(request)
+        return JSONResponse({"error": "unauthorized"}, status_code=401)
 
     @app.get("/")
     def index():
