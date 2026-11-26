@@ -284,7 +284,11 @@
   .toast.bad { border-color: #8a4034; color: #ffd0c8; }
   @media (max-width: 980px) {
     body { display: block; }
+    .top { height: auto; flex-wrap: wrap; row-gap: 8px; padding: 8px 12px; }
+    .top .brand { flex: 1 1 100%; }
+    .top .grow { display: none; }
     .desk, #halt-banner:not([hidden]) + .desk { grid-template-columns: 1fr; height: auto; }
+    .scroll { max-width: 100%; min-width: 0; }
     aside { border-left: 0; border-top: 1px solid var(--line); min-height: 420px; }
   }
 </style>
@@ -482,6 +486,11 @@ function toast(text, kind) {
   setTimeout(() => el.remove(), 3400);
 }
 function ask(title, body, okLabel) {
+  if (modalResolve) {
+    const prev = modalResolve;
+    modalResolve = null;
+    prev(false);
+  }
   $("modal-title").textContent = title;
   $("modal-body").textContent = body;
   $("modal-ok").textContent = okLabel || "Confirm";
@@ -978,7 +987,7 @@ function field(key, label, value, step, tip) {
   lab.textContent = label;
   const input = document.createElement("input");
   input.dataset.key = key;
-  const numeric = typeof value === "number";
+  const numeric = typeof value === "number" || (!!step && value == null);
   input.type = numeric ? "number" : "text";
   if (step) input.step = step;
   input.value = value == null ? "" : value;
@@ -1104,7 +1113,9 @@ async function createSimple(form) {
 async function createRaw(text) {
   try {
     await postStrat(JSON.parse(text));
-  } catch (err) { toast(err.message, "bad"); }
+  } catch (err) {
+    toast(err instanceof SyntaxError ? "json didn't parse" : err.message, "bad");
+  }
 }
 async function postStrat(body) {
   try {
@@ -1284,7 +1295,14 @@ function paintAccount() {
 async function connectAccount(root) {
   const body = { mode: "paper", account: "", vault: "", agent_key: "" };
   root.querySelectorAll("[data-key]").forEach((el) => { body[el.dataset.key] = el.value.trim(); });
-  if (body.mode !== "paper") {
+  if (body.mode === "paper") {
+    const ok = await ask(
+      "Paper",
+      "clears the local wallet. equity goes back to the start, and a live link drops.",
+      "Reset"
+    );
+    if (!ok) return;
+  } else {
     const ok = await ask(
       "Connect " + body.mode,
       "key stays in this process. live still waits for Arm, and for an ARM file.",
@@ -1297,7 +1315,14 @@ async function connectAccount(root) {
     toast(res.mode === "paper" ? "paper wallet" : ("connected " + res.mode));
     await tick();
     paintAccount();
-  } catch (err) { toast(err.message, "bad"); }
+  } catch (err) {
+    const say = {
+      account: "address needs 0x and 40 hex characters.",
+      vault: "vault address looks wrong.",
+      "agent key": "agent key was rejected.",
+    };
+    toast(say[err.message] || err.message, "bad");
+  }
 }
 
 async function tick() {
@@ -1370,7 +1395,11 @@ $("resume").onclick = async () => {
 };
 $("flatten").onclick = async () => {
   if (!await ask("Flatten", "close what's open. reduce-only.", "Flatten")) return;
-  try { await api("/api/flatten", { method: "POST" }); toast("flatten sent"); tick(); }
+  try {
+    const res = await api("/api/flatten", { method: "POST" });
+    toast(res.n ? "flatten sent" : "nothing open");
+    tick();
+  }
   catch (err) { toast(err.message, "bad"); }
 };
 document.addEventListener("keydown", (ev) => {

@@ -30,10 +30,10 @@ def _load_common(raw):
         "coins": list(raw.get("coins") or []),
         "risk_frac": float(raw["risk_frac"]),
         "stop_atr": float(raw["stop_atr"]),
-        "take_r": None if raw.get("take_r") in (None, "") else float(raw["take_r"]),
-        "max_hold_bars": int(raw.get("max_hold_bars", 16)),
-        "funding_block": float(raw.get("funding_block", 0)),
-        "atr_len": int(raw.get("atr_len", 14)),
+        "take_r": _take(raw),
+        "max_hold_bars": _count(raw, "max_hold_bars", 16, 1, 100000),
+        "funding_block": _funding_block(raw),
+        "atr_len": _count(raw, "atr_len", 14, 1, 500),
     }
 
 
@@ -199,9 +199,7 @@ def build_strategy(raw: dict):
         raise ValueError("risk_frac")
     if isinstance(stop, bool) or not isinstance(stop, (int, float)) or float(stop) <= 0:
         raise ValueError("stop_atr")
-    if "take_r" in raw and raw["take_r"] not in (None, ""):
-        if isinstance(raw["take_r"], bool) or float(raw["take_r"]) <= 0:
-            raise ValueError("take_r")
+    _take(raw)
     coins = raw.get("coins") or []
     if not isinstance(coins, list) or not all(isinstance(c, str) for c in coins):
         raise ValueError("coins")
@@ -223,9 +221,8 @@ def build_strategy(raw: dict):
                 raise ValueError("donchian")
         return Rules(raw)
     if kind == "breakout":
-        n = int(raw.get("donchian", 20))
-        if not 2 <= n <= 500:
-            raise ValueError("donchian")
+        raw = dict(raw)
+        raw["donchian"] = _count(raw, "donchian", 20, 2, 500)
         return Breakout(raw)
     if kind == "ema":
         fast, slow = _whole(raw.get("fast"), 2, 200, "fast"), _whole(raw.get("slow"), 2, 200, "slow")
@@ -260,6 +257,50 @@ def build_strategy(raw: dict):
     raw = dict(raw)
     raw["length"] = length
     return Spec(raw, "bollinger")
+
+
+def _take(raw):
+    if "take_r" not in raw or raw["take_r"] in (None, ""):
+        return None
+    value = raw["take_r"]
+    if isinstance(value, bool):
+        raise ValueError("take_r")
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        raise ValueError("take_r")
+    if value <= 0:
+        raise ValueError("take_r")
+    return value
+
+
+def _funding_block(raw):
+    # blank turns the cutoff off
+    if "funding_block" not in raw or raw["funding_block"] in (None, ""):
+        return 0.0
+    value = raw["funding_block"]
+    if isinstance(value, str):
+        try:
+            value = float(value)
+        except ValueError:
+            raise ValueError("funding_block")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("funding_block")
+    return float(value)
+
+
+def _count(raw, key, default, lo, hi):
+    if key not in raw:
+        return _whole(default, lo, hi, key)
+    value = raw[key]
+    if value in (None, ""):
+        raise ValueError(key)
+    if isinstance(value, str):
+        try:
+            value = float(value)
+        except ValueError:
+            raise ValueError(key)
+    return _whole(value, lo, hi, key)
 
 
 def _whole(value, lo, hi, label):

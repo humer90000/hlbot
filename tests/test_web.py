@@ -58,3 +58,35 @@ def test_strategy_roundtrip_and_arm(client):
     assert client.get("/api/state", headers=h).json()["halted"] is True
     assert client.post("/api/disarm", headers=h).status_code == 200
     assert client.get("/api/state", headers=h).json()["armed"] is False
+
+
+def test_blank_strategy_fields_and_coin_case(client):
+    h = {"Authorization": "Bearer test-token"}
+    base = {
+        "name": "custom2",
+        "kind": "ema",
+        "enabled": False,
+        "risk_frac": 0.01,
+        "stop_atr": 1.2,
+        "fast": 9,
+        "slow": 21,
+    }
+    for key in ("max_hold_bars", "atr_len"):
+        res = client.post("/api/strategies", json={**base, key: None}, headers=h)
+        assert res.status_code == 400
+        assert res.json()["error"] == key
+    zero = client.post("/api/strategies", json={**base, "max_hold_bars": 0}, headers=h)
+    assert zero.status_code == 400
+    blank = client.post("/api/strategies", json={**base, "funding_block": None, "coins": ["btc", " doge ", "btc", "purr/usdc", "nope"]}, headers=h)
+    assert blank.status_code == 200
+    saved = blank.json()["strategy"]
+    assert saved["funding_block"] == 0
+    assert saved["coins"] == ["BTC", "DOGE", "PURR/USDC", "nope"]
+    assert client.delete("/api/strategies/custom2", headers=h).status_code == 200
+    don = client.post(
+        "/api/strategies",
+        json={"name": "custom2", "kind": "breakout", "enabled": False, "risk_frac": 0.01, "stop_atr": 1.2, "donchian": None},
+        headers=h,
+    )
+    assert don.status_code == 400
+    assert don.json()["error"] == "donchian"

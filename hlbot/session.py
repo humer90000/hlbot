@@ -478,6 +478,9 @@ class Session:
     def upsert_strategy(self, raw):
         from hlbot.strat import build_strategy
 
+        if isinstance(raw, dict) and isinstance(raw.get("coins"), list):
+            raw = dict(raw)
+            raw["coins"] = self._match_coins(raw["coins"])
         strat = build_strategy(raw)
         with self.lock:
             for i, cur in enumerate(self.strategies):
@@ -490,6 +493,22 @@ class Session:
             if strat.enabled:
                 self._only(strat.name)
             return strat
+
+    def _match_coins(self, names):
+        with self.lock:
+            by_lower = {name.lower(): name for name in self.coins}
+        out = []
+        seen = set()
+        for name in names:
+            if not isinstance(name, str):
+                out.append(name)
+                continue
+            hit = by_lower.get(name.strip().lower(), name.strip())
+            if hit in seen:
+                continue
+            seen.add(hit)
+            out.append(hit)
+        return out
 
     def _only(self, name):
         for strat in self.strategies:
