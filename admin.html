@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The desk</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0;
+    background: #12161c;
+    color: #d7dee8;
+    font: 16px/1.55 Georgia, "Iowan Old Style", serif;
+  }
+  main { max-width: 42rem; margin: 0 auto; padding: 40px 22px 72px; }
+  h1 { font-size: 1.7rem; font-weight: 600; letter-spacing: 0; margin: 0 0 8px; }
+  h2 { font-size: 1.15rem; font-weight: 600; margin: 2rem 0 .4rem; }
+  p, li { color: #c5ceda; }
+  a { color: #d7b56d; }
+  code { font-family: ui-monospace, Consolas, monospace; font-size: .9em; color: #efe6d2; }
+  .lead { color: #9aa6b5; margin-top: 0; }
+  ul { padding-left: 1.2rem; }
+  li + li { margin-top: .35rem; }
+</style>
+</head>
+<body>
+<main>
+<h1>The desk</h1>
+<p class="lead">The page that opens after you paste the token. It only talks to the bot on this computer. Paper is where you start. Nothing is sent to the exchange until you connect an agent and press Arm.</p>
+
+<h2>Before any button</h2>
+<p>The terminal prints <code>http://127.0.0.1:8787</code> and a token. Paste the token once. The browser keeps it for that tab. A wrong token stays on the login card.</p>
+<p>The pill in the corner says <b>paper</b>, <b>testnet</b>, or <b>live</b>. Next to it, <b>safe</b> means new entries are off, <b>armed</b> means they are allowed, <b>halted</b> means entries are blocked but exits still run. “live” under the quote age is only “the price is fresh”. It is not the account mode.</p>
+<p>Equity and day are the paper wallet until Account is connected. The loop time is how long the last decision took. If that number climbs, the page is still only a screen. The python process is the thing that can send an order.</p>
+
+<h2>Arm, Halt, Flatten</h2>
+<p><b>Arm</b> is the switch for new entries. Press it when the coins and the strategy look right and you actually want a fill. In paper the fill stays on this machine. On testnet or live the agent signs it. Live also refuses to arm until an empty file named <code>ARM</code> sits in the project folder. That file is a latch, not a password. Disarm stops new entries. What is already open stays until a stop fills or you flatten.</p>
+<p><b>Halt</b> is the panic that still lets exits through. Use it when the book looks wrong, or you want the stop and the flatten path to keep working, but no new position. The red line stays on screen until <b>Resume</b>.</p>
+<p><b>Flatten</b> closes what is open, reduce-only, so it cannot flip you into the other side. Use it when you want out now, not at the stop. If nothing is open it just says so. A close is allowed to reach further through the mid than an entry, because an entry is picky and an exit has to get out of a wide book.</p>
+
+<h2>The coin list</h2>
+<p>Press <code>/</code> to search. All / Perps / Spot / HIP-3 is the market. Any / Liquid / Enabled / Positions is a filter on top of that. Sort by clicking a column. Prev and Next are just pages of the same list.</p>
+<p>BTC and ETH start on. Leave the rest off until you mean it. On in the row turns a name on. A thin book, or a spot name that only has a mid, asks first. Say yes only if you accept a smaller size. A delisted name will not turn on. Liquid means the spread and the day volume clear the floors on the Risk tab. Enable liquid, on that tab, turns on every name that already clears them. It does not turn on the thin ones.</p>
+<p>Click the row, not the On button, to open the coin pane.</p>
+
+<h2>One coin, and the leverage</h2>
+<p>The pane shows the bid, ask, spread, funding, day volume, how old the quote is, and whether this name has bars yet. Bars show up after the name is on. The strategy reads those bars. No bars, no signal.</p>
+<p>Perps have a leverage slider. It starts at <b>1x</b> on every coin. 1x keeps the order inside equity. Move it only when you want the exchange to borrow. The right end is that coin’s own maximum, the same cap the exchange publishes. Spot has no slider. It stays 1x.</p>
+<p>At the maximum the hint turns red. That is the warning: the liquidation sits close to the price, and a small move can wipe the margin you posted. You can still leave it there. The desk will set that number on the exchange before an entry. It will not invent a higher one.</p>
+<p>Cross, on the Risk tab, shares the whole account. Isolated locks the margin on the coin, so a liquidation stays on that coin. A name the exchange marks isolated-only stays isolated even if the switch says Cross. If a position you already have is closer to its liquidation than the liq distance, the next entry is skipped. That is on purpose.</p>
+
+<h2>Strategies</h2>
+<p>One strategy runs. The others sit there off. Use switches to that one. EMA 9/21 is the one that ships on. RSI, MACD, Bollinger and Donchian are the same idea with the usual numbers, and they start off.</p>
+<p>Bar size is shared. Every strategy reads it. Changing it throws away the bars already loaded and pulls new ones. 15m is the example. A shorter bar fires more often and costs more in spread. A longer bar waits.</p>
+<p>The form under the list adds another. Simple is the normal fields. Advanced is JSON if the form is not enough. A new one is saved off. If the name already exists, the page asks before it replaces the old one. Blank coins means “whatever is enabled in the table”. A typed list is only those names.</p>
+<p>The strategy only suggests. The gate still has to agree: armed, not halted, fresh book, size inside the limits, stop on the right side of the price. A signal with no order usually means one of those said no. The reason shows up on the Tape.</p>
+<p>Hover a field. The tip is the short version of what the number does. Risk is how much you lose if the stop fills, not the size of the position. The stop is in ATRs and sits on the exchange as reduce-only. Target is a multiple of that stop. Leave it blank if you do not want a target. Funding cutoff skips a side when the hourly funding is past the number.</p>
+
+<h2>Risk</h2>
+<p>Open this before you arm, not after a surprise fill. Save limits writes the numbers. An empty box is not saved as zero. A number looser than the built-in ceiling is bounced and the old value stays. You can tighten. You cannot talk the desk into a bigger order than it was built for.</p>
+<ul>
+  <li><b>Order size, per coin, gross.</b> Fractions of equity. 0.10 is one order at 10%. At 1x the size is pulled back inside equity. Above 1x the coin’s leverage is what lets the notional grow, and a slice of free margin is left unspent so the entry is not using the last dollar.</li>
+  <li><b>Daily loss.</b> Down this far on the day, new entries stop and the guard flattens.</li>
+  <li><b>Liq distance.</b> How close an open position may sit to its liquidation before a new entry is refused. 0.15 is the floor.</li>
+  <li><b>Slippage and off the mid.</b> How far an entry limit may reach. This is for getting in. Getting out is allowed to reach further.</li>
+  <li><b>Stale quote.</b> Older than this, skip the entry. Exits still go.</li>
+  <li><b>Book share.</b> Do not take more than this fraction of the size sitting in the book.</li>
+  <li><b>Max spread and min day volume.</b> What “liquid” means in the filter. Wider or quieter counts as thin.</li>
+</ul>
+<p>Reload markets pulls the coin list again. Use it when the exchange adds or delists a name and the table looks old.</p>
+
+<h2>Account</h2>
+<p>Stay on paper until the page, the coins, and one strategy make sense. Paper reads the real prices and fills locally.</p>
+<p>Testnet is the next step. You need the master account address, <code>0x</code> and 40 hex characters, and an agent key from Hyperliquid. The master private key does not go in this box, the config, or the log. The agent signs orders. It cannot withdraw, and it cannot move USDC over to the spot wallet. Spot buys spend spot USDC. If that balance is empty, the buy is refused.</p>
+<p>Connect stores the agent key in the process memory until you stop the program. It does not arm. After a restart you connect again. Vault stays empty unless the agent is trading a vault.</p>
+<p>Live is the same form plus the <code>ARM</code> file, and only after testnet has done the thing you care about. Switching back to paper asks first, because it drops the link and resets the local wallet to the starting equity.</p>
+<p>Perp free is what the next perp entry can lean on. The cushion for leverage is taken out of that, not out of the spot balance.</p>
+
+<h2>Tape</h2>
+<p>The running note of what the desk just did. Enables, rejects, fills, leverage changes. When an order does not appear, read the last line before you change a number. The same reason is not shouted again for the same bar.</p>
+
+<h2>A normal session</h2>
+<ul>
+  <li>Start the bot, paste the token, leave the mode on paper.</li>
+  <li>Look at BTC. Leave leverage at 1x unless you have a reason to move it.</li>
+  <li>Keep one strategy on. Check the bar size.</li>
+  <li>Arm. Watch the tape. Flatten when you want the paper position gone.</li>
+  <li>Only then connect testnet, still disarmed, then arm.</li>
+  <li>Live is last, and only with the <code>ARM</code> file already in the folder.</li>
+</ul>
+<p>If you are not sure, Halt. Exits still work. Flatten if a position is the part you want gone.</p>
+</main>
+</body>
+</html>

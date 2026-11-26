@@ -40,6 +40,8 @@ def test_catalog_asset_ids_cover_perp_spot_and_hip3():
     assert cat["xyz:TSLA"].hip3 and cat["xyz:TSLA"].asset == 110_000
     assert cat["PURR/USDC"].market == "spot" and cat["PURR/USDC"].asset == 10_000
     assert cat["PURR/USDC"].base == "PURR"
+    strict = {"universe": [{"name": "HYPE", "szDecimals": 2, "maxLeverage": 3, "marginMode": "strictIsolated"}]}
+    assert parse_catalog(strict, SPOT)["HYPE"].isolated_only
 
     def post(payload):
         if payload["type"] == "meta" and "dex" not in payload:
@@ -259,6 +261,30 @@ def test_a_short_stop_buys_back():
     assert broker.cash == Decimal("9988")
 
 
+def test_a_filled_trigger_batch_is_not_a_reject():
+    from hlbot.live import order_problem
+
+    filled = {
+        "status": "ok",
+        "response": {
+            "data": {
+                "statuses": [
+                    {"filled": {"totalSz": "0.00017", "avgPx": "61794.0"}},
+                    "waitingForTrigger",
+                    "waitingForTrigger",
+                ]
+            }
+        },
+    }
+    assert order_problem(filled) is None
+    miss = {
+        "status": "ok",
+        "response": {"data": {"statuses": [{"error": "Order could not immediately match against any resting orders. asset=3"}]}},
+    }
+    assert "match" in order_problem(miss)
+    assert order_problem({"status": "ok", "response": {"data": {"statuses": ["nope"]}}}) == "rejected"
+
+
 def test_wire_groups_the_stop_with_the_entry():
     plan = OrderPlan(
         coin="BTC",
@@ -366,6 +392,8 @@ def test_a_live_send_waits_for_the_account_before_opening_again(tmp_path):
     assert s.synced is True and s.spot_known is True
     assert s.broker.spot["PURR"] == Decimal("4")
     assert "USDC" not in s.broker.spot
+    assert s._account().usdc == Decimal("9")
+    assert s._account().free_margin == Decimal("10000")
     s.books["BTC"] = _break_book()
     s.now_ms = 5_000
     s.enabled.add("BTC")
@@ -396,6 +424,136 @@ def test_a_live_send_waits_for_the_account_before_opening_again(tmp_path):
     s.step()
     assert sent == ["BTC"]
     assert "BTC" in s.broker.pos
+
+
+def test_spot_hold_and_perp_margin_come_from_the_account():
+    from hlbot.config import resolve_limits
+    from hlbot.session import Session
+
+    s = Session(limits=resolve_limits({}), coins=coins(), strategies=[], mode="testnet", frozen=True)
+    state = {
+        "marginSummary": {"accountValue": "1000", "totalMarginUsed": "400"},
+        "assetPositions": [],
+    }
+    spot = {
+        "balances": [
+            {"coin": "USDC", "total": "25", "hold": "5"},
+            {"coin": "PURR", "total": "4", "hold": "1"},
+        ]
+    }
+    assert s.apply_account(state, spot, 0) is True
+    acct = s._account()
+    assert acct.usdc == Decimal("20")
+    assert acct.free_margin == Decimal("600")
+    assert s.broker.spot["PURR"] == Decimal("3")
+    assert s.public_state()["pockets"] == {"perp_free": 600.0, "spot_usdc": 20.0}
+
+
+def test_a_partial_fill_is_flattened_when_the_stop_is_refused():
+    from hlbot.config import resolve_limits
+    from hlbot.models import OrderPlan
+    from hlbot.session import Session
+    from hlbot.wire import make_cloid
+
+    seen = []
+
+    def transport(plan, action):
+        seen.append(plan)
+        if plan.trigger == "sl":
+            return {"status": "ok", "response": {"data": {"statuses": [{"error": "Invalid TP/SL price."}]}}}
+        if plan.purpose == "close":
+            return {"status": "ok", "response": {"data": {"statuses": [{"filled": {"totalSz": "0.25", "avgPx": "95", "oid": 3}}]}}}
+        return {"status": "ok", "response": {"data": {"statuses": [{"filled": {"totalSz": "0.25", "avgPx": "100", "oid": 2}}]}}}
+
+    s = Session(limits=resolve_limits({}), coins=coins(), strategies=[], mode="testnet", transport=transport, frozen=True)
+    plan = OrderPlan(
+        coin="BTC",
+        asset=0,
+        market="perp",
+        side="buy",
+        sz=Decimal("1"),
+        limit_px=Decimal("100"),
+        tif="Ioc",
+        reduce_only=False,
+        cloid=make_cloid("partial"),
+        stop_px=Decimal("90"),
+        take_px=Decimal("120"),
+        purpose="open",
+        strategy="t",
+        hl_coin="BTC",
+        sz_decimals=5,
+    )
+    s._execute(plan, book(), coins()["BTC"])
+    assert [p.trigger for p in seen] == ["sl", None] or [p.purpose for p in seen] == ["open", "close", "close"]
+    assert seen[0].purpose == "open"
+    assert seen[1].trigger == "sl" and seen[1].sz == Decimal("0.25") and seen[1].reduce_only is True
+    assert seen[2].purpose == "close" and seen[2].trigger is None and seen[2].side == "sell"
+    assert seen[2].sz == Decimal("0.25")
+    assert any("flat partial BTC" in line for line in s.log)
+
+
+def test_one_lot_short_still_gets_a_stop():
+    from hlbot.config import resolve_limits
+    from hlbot.session import Session
+
+    seen = []
+
+    def transport(plan, action):
+        seen.append(plan)
+        if plan.purpose == "open":
+            return {"status": "ok", "response": {"data": {"statuses": [{"filled": {"totalSz": "0.00017", "avgPx": "61400", "oid": 2}}]}}}
+        return {"status": "ok", "response": {"data": {"statuses": [{"resting": {"oid": 9}}]}}}
+
+    s = Session(limits=resolve_limits({}), coins=coins(), strategies=[], mode="testnet", transport=transport, frozen=True)
+    plan = OrderPlan(
+        coin="BTC",
+        asset=0,
+        market="perp",
+        side="buy",
+        sz=Decimal("0.00018"),
+        limit_px=Decimal("61500"),
+        tif="Ioc",
+        reduce_only=False,
+        cloid=make_cloid("lot"),
+        stop_px=Decimal("59000"),
+        take_px=None,
+        purpose="open",
+        strategy="t",
+        hl_coin="BTC",
+        sz_decimals=5,
+    )
+    s._execute(plan, book(), coins()["BTC"])
+    assert seen[1].trigger == "sl"
+    assert seen[1].sz == Decimal("0.00017")
+    assert any("stop BTC" in line for line in s.log)
+
+
+def test_hip3_dex_is_loaded_before_the_name_lookup():
+    from hlbot.live import ensure_market
+
+    class Info:
+        def __init__(self):
+            self.name_to_coin = {}
+            self.calls = []
+
+        def perp_dexs(self):
+            return [None, {"name": "xyz"}]
+
+        def meta(self, dex=""):
+            self.calls.append(dex)
+            return {"universe": [{"name": "xyz:TSLA", "szDecimals": 3}]}
+
+        def set_perp_meta(self, meta, offset):
+            for i, row in enumerate(meta["universe"]):
+                self.name_to_coin[row["name"]] = row["name"]
+                self.offset = offset + i
+
+    info = Info()
+    ensure_market(info, "xyz:TSLA")
+    assert info.offset == 110_000
+    assert info.calls == ["xyz"]
+    ensure_market(info, "xyz:TSLA")
+    assert info.calls == ["xyz"]
 
 
 def test_live_arm_needs_the_file(tmp_path):
@@ -472,6 +630,41 @@ def test_touch_mids_shifts_the_book_and_keeps_bars(session):
     assert abs(book.bid - 109.99) < 1e-9
     assert abs(book.ask - 110.01) < 1e-9
     assert book.mark == 110
+
+
+def test_a_stop_past_the_limit_is_not_sent():
+    from hlbot.live import _claim_cloid, _stop_is_marketable, make_sender, order_problem
+    from hlbot.px import D
+
+    def plan(side, limit, stop):
+        return OrderPlan(
+            coin="BTC",
+            asset=0,
+            market="perp",
+            side=side,
+            sz=D("0.001"),
+            limit_px=D(limit),
+            tif="Ioc",
+            reduce_only=False,
+            cloid=make_cloid("t", side, limit),
+            stop_px=D(stop),
+            take_px=None,
+            purpose="open",
+            strategy="t",
+            hl_coin="BTC",
+            sz_decimals=5,
+        )
+
+    bad = plan("buy", 100, 103)
+    assert _stop_is_marketable(bad)
+    assert _stop_is_marketable(plan("sell", 100, 97))
+    assert _stop_is_marketable(plan("buy", 100, 90)) is False
+    send = make_sender("https://api.hyperliquid-testnet.xyz", "0x" + "ab" * 20, "", "0x" + "11" * 32)
+    assert order_problem(send(bad, {"grouping": "na"})) == "stop too tight"
+    assert order_problem(send(bad, {"grouping": "na"})) == "stop too tight"
+    holder = {}
+    assert _claim_cloid(holder, bad.cloid) is True
+    assert _claim_cloid(holder, bad.cloid) is False
 
 
 def test_sdk_accepts_our_cloid():

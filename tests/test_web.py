@@ -74,6 +74,85 @@ def test_blank_risk_number_is_rejected(client):
     assert client.get("/api/state", headers=h).json()["risk"]["max_slippage_bps"] == 8
 
 
+def test_margin_switch_and_the_wider_size_ceiling(client):
+    h = {"Authorization": "Bearer test-token"}
+    assert client.post("/api/margin", json={"margin": "both"}, headers=h).status_code == 400
+    ok = client.post("/api/margin", json={"margin": "isolated"}, headers=h)
+    assert ok.status_code == 200
+    assert ok.json()["margin"] == "isolated"
+    assert client.get("/api/state", headers=h).json()["margin"] == "isolated"
+    back = client.post("/api/margin", json={"margin": "cross"}, headers=h)
+    assert back.json()["margin"] == "cross"
+    wide = {
+        "max_leverage": 2,
+        "max_order_frac": 2,
+        "max_coin_frac": 2,
+        "max_gross_frac": 2,
+    }
+    assert client.post("/api/risk", json=wide, headers=h).status_code == 200
+    too = client.post("/api/risk", json={"max_order_frac": 4, "max_coin_frac": 4, "max_gross_frac": 4}, headers=h)
+    assert too.status_code == 400
+    assert "above ceiling" in too.json()["error"]
+
+
+def test_each_coin_starts_at_1x_and_stops_at_its_own_max(client):
+    h = {"Authorization": "Bearer test-token"}
+    rows = client.get("/api/coins", headers=h).json()
+    btc = next(row for row in rows if row["name"] == "BTC")
+    assert btc["leverage"] == 1
+    assert btc["max_leverage"] == 40
+    assert client.post("/api/leverage", json={"coin": "BTC", "leverage": 41}, headers=h).status_code == 400
+    assert client.post("/api/leverage", json={"coin": "BTC", "leverage": 2.5}, headers=h).status_code == 400
+    assert client.post("/api/leverage", json={"coin": "PURR/USDC", "leverage": 2}, headers=h).status_code == 400
+    top = client.post("/api/leverage", json={"coin": "BTC", "leverage": 40}, headers=h)
+    assert top.status_code == 200
+    assert top.json()["leverage"] == 40 and top.json()["maxed"] is True
+    back = client.post("/api/leverage", json={"coin": "BTC", "leverage": 1}, headers=h)
+    assert back.json()["leverage"] == 1 and back.json()["maxed"] is False
+    again = next(row for row in client.get("/api/coins", headers=h).json() if row["name"] == "BTC")
+    assert again["leverage"] == 1
+
+
+def test_open_position_leverage_is_pushed_once(session):
+    from decimal import Decimal
+
+    from tests.conftest import book
+
+    calls = []
+
+    def apply(coin, lev, cross):
+        calls.append((coin, lev, cross))
+
+    def transport(plan, action):
+        return None
+
+    transport.apply = apply
+    session.mode = "testnet"
+    session.transport = transport
+    session.strategies = []
+    session.leverage["BTC"] = 2
+    session.broker.pos["BTC"] = [Decimal("0.1"), Decimal("100")]
+    session.books["BTC"] = book()
+    session.step()
+    assert calls == [("BTC", 2, True)]
+    session.step()
+    assert calls == [("BTC", 2, True)]
+    assert session.set_margin("isolated") is None
+    session.step()
+    assert calls[-1] == ("BTC", 2, False)
+    assert session.set_margin("nope") == "margin"
+
+    def boom(coin, lev, cross):
+        raise RuntimeError("nope")
+
+    session.transport.apply = boom
+    session._lev_applied.clear()
+    session._lev_failed.clear()
+    session.step()
+    session.step()
+    assert sum(1 for line in session.log if "leverage BTC RuntimeError" in line) == 1
+
+
 def test_blank_strategy_fields_and_coin_case(client):
     h = {"Authorization": "Bearer test-token"}
     base = {

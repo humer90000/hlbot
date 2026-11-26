@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 DEFAULTS = {
-    "max_leverage": 2,
+    "max_leverage": 1,
     "max_order_frac": 0.10,
     "max_coin_frac": 0.25,
     "max_gross_frac": 1.0,
@@ -22,9 +22,11 @@ DEFAULTS = {
 
 # resolve_limits refuses anything past these. the desk can only go tighter.
 _CAP = {
+    # leftover desk-wide knob. the page sets leverage per coin, starting at 1.
     "max_leverage": ("max", 3),
-    "max_order_frac": ("max", 0.25),
-    "max_coin_frac": ("max", 0.50),
+    # 1x still clamps notional to equity. the fraction ceilings stay here.
+    "max_order_frac": ("max", 3),
+    "max_coin_frac": ("max", 3),
     "max_gross_frac": ("max", 3),
     "max_daily_loss_frac": ("max", 0.10),
     "max_slippage_bps": ("max", 8),

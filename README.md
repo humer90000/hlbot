@@ -63,6 +63,8 @@ py -3 -m hlbot check --config config.toml
 
 ## On the page
 
+The buttons, and when to press them, are in [admin.html](admin.html). Open that file in a browser.
+
 BTC and ETH are already on. The other names are off. Leave it like that until the page looks right. A thin book can be refused. The button will ask before it turns a thin name on anyway.
 
 Five strategies come with the example config. EMA 9/21 is the one that is enabled. RSI, MACD, Bollinger and Donchian are there, but off. Press Use to switch. Only one stays on.
@@ -85,14 +87,16 @@ Values in `config.toml` can only get tighter. A looser number is rejected and th
 
 The program will not go past this, even if the file says so:
 
-- leverage 3
-- one order, 25% of equity
-- one coin, 50%
+- each coin starts at 1x. a perp can be raised up to that coin's own exchange maximum, from the coin pane. the maximum shows a warning
+- one order, 3x equity, and only as far as the leverage allows
+- one coin, 3x
 - gross exposure, 3x equity
 - daily loss, 10%
 - slippage, 8 bps
 
-The example file is already inside those lines. Leverage 2, one order 10%, daily loss 3%, day volume at least 5M, spread at most 8 bps.
+The example file is already inside those lines. Leverage starts at 1, one order 10%, daily loss 3%, day volume at least 5M, spread at most 8 bps.
+
+1x keeps the size inside equity. A higher number on a coin borrows, and the exchange is set to that number before an entry. The slider stops at the maximum that coin has on the exchange, and that top setting is marked because the liquidation sits close to the price. Cross is the default. Isolated is a switch on the risk tab. A coin that only allows isolated stays isolated either way. If a position already open is closer to its liquidation than the liq distance, a new entry is skipped. A position that is already open is updated on the next loop.
 
 Opens under about $10 are skipped. Closes are not. Spot cannot be shorted.
 

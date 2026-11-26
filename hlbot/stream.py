@@ -70,6 +70,10 @@ def _socket(session, stop):
                 session.touch_mids(mids, now)
                 session.feed = "ws"
             return
+        if channel == "l2Book" and isinstance(data, dict):
+            session.touch_depth(data.get("coin") or "", data.get("levels"), now)
+            session.feed = "ws"
+            return
         if channel == "bbo" and isinstance(data, dict):
             session.touch_top(data.get("coin") or "", data.get("bbo"), now)
             session.feed = "ws"
@@ -122,7 +126,7 @@ def _subscribe_enabled(session, sock):
         api = (coin.api or name) if coin else name
         try:
             if name not in enabled:
-                sock.send(json.dumps({"method": "unsubscribe", "subscription": {"type": "bbo", "coin": api}}))
+                sock.send(json.dumps({"method": "unsubscribe", "subscription": {"type": "l2Book", "coin": api}}))
             sock.send(
                 json.dumps(
                     {"method": "unsubscribe", "subscription": {"type": "candle", "coin": api, "interval": old}}
@@ -140,7 +144,7 @@ def _subscribe_enabled(session, sock):
             continue
         api = coin.api or name
         try:
-            sock.send(json.dumps({"method": "subscribe", "subscription": {"type": "bbo", "coin": api}}))
+            sock.send(json.dumps({"method": "subscribe", "subscription": {"type": "l2Book", "coin": api}}))
             sock.send(
                 json.dumps(
                     {"method": "subscribe", "subscription": {"type": "candle", "coin": api, "interval": want}}

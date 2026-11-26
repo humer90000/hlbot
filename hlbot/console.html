@@ -244,6 +244,8 @@
     padding: 7px 9px;
   }
   .hint { color: var(--muted); font-size: 11px; margin-top: 3px; }
+  .hint.warn { color: var(--danger); }
+  input[type="range"] { width: 100%; accent-color: var(--brass); }
   .group-title { margin: 14px 0 8px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
   .strat {
     border: 1px solid var(--line);
@@ -398,12 +400,11 @@ const VIEWS = [
   ["pos", "Positions"],
 ];
 const TIPS = {
-  max_leverage: "3 is the ceiling. lower is fine, higher gets thrown out.",
-  max_order_frac: "one order, as a slice of equity. 0.10 = 10%.",
-  max_coin_frac: "biggest one coin is allowed to get.",
-  max_gross_frac: "everything added up. 1 is about 1x equity.",
+  max_order_frac: "one order, as a slice of equity. 0.10 is 10%. past 1 it needs the coin's leverage to allow it. leverage 1 pulls it back to equity.",
+  max_coin_frac: "biggest one coin. it still can't beat the leverage.",
+  max_gross_frac: "everything added up. 1 is about 1x equity. 3 is the ceiling.",
   max_daily_loss_frac: "day's down this much -> no new entries, and the guard flattens.",
-  min_liq_distance: "liq price closer than this and it won't open.",
+  min_liq_distance: "cushion down to the liq price. closer than this and the entry is refused. 0.15 is the floor.",
   max_slippage_bps: "how far the IOC can reach past the mid. bps.",
   stale_ms: "quote older than this, skip the entry. exits still go.",
   max_entry_deviation: "limit isn't allowed to sit further off the mid.",
@@ -433,7 +434,6 @@ const TIPS = {
 };
 const RISK_GROUPS = [
   ["Size", [
-    ["max_leverage", "Max leverage"],
     ["max_order_frac", "Order size"],
     ["max_coin_frac", "Per coin"],
     ["max_gross_frac", "Gross"],
@@ -465,6 +465,7 @@ let sortKey = "day_ntl";
 let sortDir = -1;
 let page = 0;
 let selected = null;
+let levHold = "";
 let tab = "coin";
 let riskDirty = false;
 let modalResolve = null;
@@ -724,6 +725,7 @@ function paintTable() {
 function paintCoin() {
   const root = $("pane-coin");
   const c = coins.find((x) => x.name === selected);
+  if (c && levHold === c.name && root.querySelector("[data-lev]")) return;
   root.innerHTML = "";
   if (!c) {
     const p = document.createElement("p");
@@ -750,6 +752,7 @@ function paintCoin() {
     ["Quote", age(c.book_age_ms)],
     [(state.interval || "15m") + " bars", c.bars ? String(c.bars) : "waiting"],
     ["Position", c.position ? String(c.position) : "flat"],
+    ["Desk", deskMargin(c)],
     ["Liquidity", c.spread_bps == null && c.bid != null ? "mid only" : (c.liquid ? "passes the floor" : "thin")],
   ].forEach(([k, v]) => {
     const a = document.createElement("span");
@@ -761,6 +764,7 @@ function paintCoin() {
     kv.appendChild(b);
   });
   root.appendChild(kv);
+  if (c.market === "perp" && !c.delisted && Number(c.max_leverage) > 1) root.appendChild(leverageBox(c));
   const row = document.createElement("div");
   row.className = "actions";
   row.style.marginTop = "14px";
@@ -1151,6 +1155,72 @@ async function postStrat(body) {
   } catch (err) { toast(err.message, "bad"); }
 }
 
+function deskMargin(c) {
+  if (!c || c.market !== "perp" || !(Number(c.max_leverage) > 1)) return "1x";
+  const top = Math.floor(Number(c.max_leverage) || 1);
+  let n = Math.floor(Number(c.leverage) || 1);
+  if (n < 1) n = 1;
+  if (n > top) n = top;
+  const iso = (state && state.margin) === "isolated" || c.isolated_only;
+  if (n <= 1) return iso ? "1x isolated" : "1x";
+  return n + "x " + (iso ? "isolated" : "cross");
+}
+function leverageHint(n, top) {
+  if (n >= top && top > 1) return "this is the highest the exchange allows on this coin. the liquidation sits close to the price, and a small move can wipe the margin.";
+  if (n <= 1) return "1x keeps the size inside equity. this coin's exchange max is " + top + "x.";
+  return "the exchange is set to " + n + "x before an entry. this coin goes up to " + top + "x.";
+}
+function leverageBox(c) {
+  const top = Math.max(1, Math.floor(Number(c.max_leverage) || 1));
+  let n = Math.floor(Number(c.leverage) || 1);
+  if (n < 1) n = 1;
+  if (n > top) n = top;
+  const wrap = document.createElement("div");
+  wrap.className = "field";
+  wrap.dataset.lev = c.name;
+  const lab = document.createElement("label");
+  const name = document.createElement("span");
+  name.textContent = "Leverage";
+  const val = document.createElement("b");
+  val.className = "num";
+  val.textContent = n + "x";
+  lab.appendChild(name);
+  lab.appendChild(val);
+  const slider = document.createElement("input");
+  slider.type = "range";
+  slider.min = "1";
+  slider.max = String(top);
+  slider.step = "1";
+  slider.value = String(n);
+  slider.dataset.role = "lev";
+  slider.dataset.coin = c.name;
+  const hint = document.createElement("div");
+  hint.className = n >= top ? "hint warn" : "hint";
+  hint.textContent = leverageHint(n, top);
+  const paint = () => {
+    const now = Math.max(1, Math.min(top, Math.floor(Number(slider.value) || 1)));
+    val.textContent = now + "x";
+    hint.className = now >= top ? "hint warn" : "hint";
+    hint.textContent = leverageHint(now, top);
+  };
+  slider.oninput = () => { levHold = c.name; paint(); };
+  slider.onchange = async () => {
+    const now = Math.max(1, Math.min(top, Math.floor(Number(slider.value) || 1)));
+    try {
+      const r = await api("/api/leverage", { method: "POST", body: JSON.stringify({ coin: c.name, leverage: now }) });
+      const row = coins.find((x) => x.name === c.name);
+      if (row) row.leverage = r.leverage;
+      paint();
+    } catch (err) {
+      toast(err.message, "bad");
+    }
+    levHold = "";
+  };
+  wrap.appendChild(lab);
+  wrap.appendChild(slider);
+  wrap.appendChild(hint);
+  return wrap;
+}
 function paintRisk() {
   const root = $("pane-risk");
   if (riskDirty && root.contains(document.activeElement)) return;
@@ -1161,6 +1231,37 @@ function paintRisk() {
   note.className = "meta";
   note.textContent = "you can only tighten what's baked in. looser numbers get bounced and the old limits stay.";
   root.appendChild(note);
+  const modeRow = document.createElement("div");
+  modeRow.className = "field";
+  const modeLab = document.createElement("label");
+  modeLab.textContent = "Margin";
+  const modeBtns = document.createElement("div");
+  modeBtns.className = "actions";
+  [["cross", "Cross"], ["isolated", "Isolated"]].forEach(([id, label]) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    const on = ((state && state.margin) || "cross") === id;
+    b.className = on ? "btn primary" : "btn";
+    b.textContent = label;
+    b.onclick = async () => {
+      try {
+        const r = await api("/api/margin", { method: "POST", body: JSON.stringify({ margin: id }) });
+        if (state) state.margin = r.margin;
+        toast(r.margin === "isolated" ? "isolated margin" : "cross margin");
+        modeBtns.querySelectorAll("button").forEach((x) => {
+          x.className = x.textContent.toLowerCase() === r.margin ? "btn primary" : "btn";
+        });
+      } catch (err) { toast(err.message, "bad"); }
+    };
+    modeBtns.appendChild(b);
+  });
+  const modeHint = document.createElement("div");
+  modeHint.className = "hint";
+  modeHint.textContent = "cross shares the account. isolated locks the margin on that coin, so a liquidation stays there. a name that is isolated-only stays isolated.";
+  modeRow.appendChild(modeLab);
+  modeRow.appendChild(modeBtns);
+  modeRow.appendChild(modeHint);
+  root.appendChild(modeRow);
   RISK_GROUPS.forEach(([title, rows]) => {
     const h = document.createElement("div");
     h.className = "group-title";
@@ -1290,6 +1391,16 @@ function paintAccount() {
     note.textContent = "paper fills stay on this box. testnet and live read the account. master key stays offline.";
   }
   root.appendChild(note);
+  const pockets = (state && state.pockets) || {};
+  if (pockets.perp_free != null || pockets.spot_usdc != null) {
+    const line = document.createElement("div");
+    line.className = "meta";
+    const bits = [];
+    if (pockets.perp_free != null) bits.push("perp free " + usd(pockets.perp_free));
+    if (pockets.spot_usdc != null) bits.push("spot usdc " + usd(pockets.spot_usdc));
+    line.textContent = bits.join(" · ") + ". perp entries leave the liq cushion untouched. spot buys spend the spot usdc.";
+    root.appendChild(line);
+  }
   const modeWrap = document.createElement("div");
   modeWrap.className = "field";
   const modeLab = document.createElement("label");

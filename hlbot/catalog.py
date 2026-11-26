@@ -2,6 +2,13 @@ import json
 import urllib.request
 
 
+def _isolated(row) -> bool:
+    # strict isolated is the same lock, sometimes without the older flag
+    if row.get("onlyIsolated"):
+        return True
+    return row.get("marginMode") == "strictIsolated"
+
+
 def parse_catalog(perp_meta, spot_meta, dex_metas=None) -> dict:
     from hlbot.models import Coin
 
@@ -17,7 +24,7 @@ def parse_catalog(perp_meta, spot_meta, dex_metas=None) -> dict:
             label=name,
             api=name,
             delisted=bool(row.get("isDelisted")),
-            isolated_only=bool(row.get("onlyIsolated")),
+            isolated_only=_isolated(row),
             dex="",
         )
 
@@ -35,7 +42,7 @@ def parse_catalog(perp_meta, spot_meta, dex_metas=None) -> dict:
                 label=name,
                 api=name,
                 delisted=bool(row.get("isDelisted")),
-                isolated_only=bool(row.get("onlyIsolated")),
+                isolated_only=_isolated(row),
                 hip3=True,
                 dex=dex_name,
             )

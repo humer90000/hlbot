@@ -55,6 +55,11 @@ class OrderPlan:
     hl_coin: str
     sz_decimals: int
     clipped: bool = False
+    # integer the exchange is set to before an open. 1 means the size stays inside equity.
+    leverage: int = 1
+    cross: bool = True
+    # "sl" or "tp" means this order is the trigger itself, not a limit with children.
+    trigger: str | None = None
 
 
 @dataclass(frozen=True)
@@ -78,6 +83,8 @@ class Book:
     lows: tuple[float, ...] = ()
     closes: tuple[float, ...] = ()
     synthetic: bool = False
+    # true once a book snapshot summed the size inside the slippage band
+    depth: bool = False
 
     @property
     def mid(self) -> float:
@@ -104,3 +111,5 @@ class Account:
     sent: set[str] = field(default_factory=set)
     liq: dict[str, Decimal] = field(default_factory=dict)
     spot_known: bool = True
+    # None on paper. On the exchange this is account value minus margin already in use.
+    free_margin: Decimal | None = None

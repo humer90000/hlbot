@@ -10,7 +10,7 @@ account = ""
 vault = ""
 
 [risk]
-max_leverage = 2
+max_leverage = 1
 max_order_frac = 0.10
 max_coin_frac = 0.25
 max_gross_frac = 1

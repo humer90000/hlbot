@@ -10,10 +10,30 @@ from pathlib import Path
 
 from hlbot.guard import flatten_intents, heartbeat_due
 from hlbot.models import Account, Reject
-from hlbot.px import D, fmt_num
-from hlbot.risk import Gate, decide
+from hlbot.px import D, fmt_num, round_px
+from hlbot.risk import Gate, decide, use_leverage
 from hlbot.sim import SimBroker
-from hlbot.wire import build_action
+from hlbot.wire import build_action, make_cloid
+
+
+def _size_in_band(rows, cap, asks) -> float:
+    total = 0.0
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        try:
+            px = float(row["px"])
+            sz = float(row.get("sz") or 0)
+        except (KeyError, TypeError, ValueError):
+            continue
+        if px <= 0 or sz <= 0:
+            continue
+        if asks and px > cap:
+            continue
+        if not asks and px < cap:
+            continue
+        total += sz
+    return total
 
 
 class Snap:
@@ -71,6 +91,12 @@ class Session:
         self.sent = set()
         self.armed = False
         self.halted = False
+        self.margin = "cross"
+        self.leverage = {}
+        self.spot_usdc = D(0)
+        self.free_margin = None
+        self._lev_applied = {}
+        self._lev_failed = {}
         self.synced = mode in ("paper", "backtest")
         self.spot_known = mode in ("paper", "backtest")
         self.account_gen = 0
@@ -90,7 +116,7 @@ class Session:
         self.interval = interval if interval in INTERVALS else "15m"
 
     def gate(self) -> Gate:
-        return Gate(self.limits, set(self.enabled), set(self.forced))
+        return Gate(self.limits, set(self.enabled), set(self.forced), self.margin, dict(self.leverage))
 
     def note(self, text):
         self.log.appendleft(f"{self.now_ms} {text}")
@@ -123,10 +149,11 @@ class Session:
             armed=self.armed,
             positions=self._positions(),
             spot=dict(self.broker.spot),
-            usdc=self.broker.cash,
+            usdc=self.broker.cash if self.mode in ("paper", "backtest") else self.spot_usdc,
             sent=self.sent,
             liq={k: D(v) for k, v in self.liq.items()},
             spot_known=self.spot_known,
+            free_margin=None if self.mode in ("paper", "backtest") else self.free_margin,
         )
 
     def _equity(self):
@@ -177,6 +204,7 @@ class Session:
 
     def _step(self):
         self._stamp()
+        self._ensure_leverage()
         loss = self._loss_hit()
         flatten_now = heartbeat_due(self.now_ms, self.beat_ms, self.beat_max_ms, loss)
         self.beat_ms = self.now_ms
@@ -222,7 +250,7 @@ class Session:
             out.append(result)
             if isinstance(result, Reject):
                 # stale / not armed can clear later in the same bar. the rest will not.
-                if result.reason not in ("not armed", "halted", "stale book", "desynced", "no book"):
+                if result.reason not in ("not armed", "halted", "stale book", "desynced", "no book", "thin book"):
                     self.settled.add(stamp)
                 if self.said.get(stamp) != result.reason:
                     self.said[stamp] = result.reason
@@ -253,6 +281,71 @@ class Session:
             self.note(f"{kind} {fill.coin} {fmt_num(fill.sz)} @ {fmt_num(fill.px)}")
             self._journal("fill", fill.coin, f"{kind} {fill.sz}@{fill.px}")
 
+    def set_margin(self, mode):
+        mode = (mode or "").strip().lower()
+        if mode not in ("cross", "isolated"):
+            return "margin"
+        with self.lock:
+            if mode == self.margin:
+                return None
+            self.margin = mode
+            # an open position has to be told again. the old setting is stale.
+            self._lev_applied.clear()
+            self._lev_failed.clear()
+            self.note("margin " + mode)
+        return None
+
+    def set_leverage(self, name, raw):
+        # one integer per coin, from 1 up to the max that coin has on the exchange.
+        coin = self.coins.get(name)
+        if coin is None or coin.market != "perp" or coin.delisted or coin.max_leverage <= 1:
+            return "leverage"
+        if isinstance(raw, bool) or isinstance(raw, float):
+            return "leverage"
+        if isinstance(raw, str):
+            if not raw.isdigit():
+                return "leverage"
+            n = int(raw)
+        elif isinstance(raw, int):
+            n = raw
+        else:
+            return "leverage"
+        if n < 1 or n > int(coin.max_leverage):
+            return "leverage"
+        with self.lock:
+            self.leverage[name] = n
+            self._lev_applied.pop(name, None)
+            self._lev_failed.pop(name, None)
+            self.note(f"leverage {name} {n}x")
+        return None
+
+    def _ensure_leverage(self):
+        # paper has nothing to tell. a flat book waits until the order itself.
+        if self.mode not in ("live", "testnet"):
+            return
+        apply = getattr(self.transport, "apply", None)
+        if apply is None:
+            return
+        for name, szi in self._positions().items():
+            if szi == 0:
+                continue
+            coin = self.coins.get(name)
+            if coin is None or coin.market != "perp" or coin.delisted:
+                continue
+            lev, cross = use_leverage(self.limits, coin, self.margin, self.leverage.get(name, 1))
+            key = (lev, cross)
+            if self._lev_applied.get(name) == key or self._lev_failed.get(name) == key:
+                continue
+            try:
+                apply(coin.api or coin.name, lev, cross)
+            except Exception as exc:
+                self._lev_failed[name] = key
+                self.note(f"leverage {name} {exc.__class__.__name__}")
+                continue
+            self._lev_failed.pop(name, None)
+            self._lev_applied[name] = key
+            self.note(f"leverage {name} {lev}x {'cross' if cross else 'isolated'}")
+
     def _execute(self, plan, book, coin):
         action = build_action(plan)
         if self.mode in ("paper", "backtest"):
@@ -271,9 +364,84 @@ class Session:
         problem = order_problem(result)
         if problem:
             self.note(f"send failed {plan.coin} {problem}")
+        elif plan.stop_px is not None and not plan.reduce_only and not plan.trigger:
+            # a partial IOC does not leave the child stop on the book
+            self._cover_partial(plan, result, coin)
         # the fill can land before the next account pull. don't send another open on the old book.
         self._mark_unconfirmed()
         return None
+
+    def _cover_partial(self, plan, result, coin):
+        from hlbot.live import filled_sz, order_problem
+
+        got = filled_sz(result)
+        if got is None or got <= 0 or coin is None:
+            return
+        # one lot short is still a partial. the exchange keeps the child stop only on a full fill,
+        # and testnet left a naked 0.00017 when the order was 0.00018.
+        if got >= plan.sz:
+            return
+        self.note(f"partial {plan.coin} {fmt_num(got)}")
+        if plan.market == "perp":
+            stop = replace(
+                plan,
+                side="sell" if plan.side == "buy" else "buy",
+                sz=got,
+                limit_px=plan.stop_px,
+                reduce_only=True,
+                stop_px=None,
+                take_px=None,
+                trigger="sl",
+                purpose="close",
+                cloid=make_cloid(plan.cloid, "partial-sl"),
+            )
+            try:
+                stopped = self.transport(stop, build_action(stop))
+            except Exception as exc:
+                self.note(f"stop failed {plan.coin} {exc.__class__.__name__}")
+                stopped = None
+            else:
+                trouble = order_problem(stopped)
+                if not trouble:
+                    self.note(f"stop {plan.coin} {fmt_num(got)}")
+                    return
+                self.note(f"stop failed {plan.coin} {trouble}")
+        self._flatten_partial(plan, got, coin)
+
+    def _flatten_partial(self, plan, sz, coin):
+        from hlbot.live import order_problem
+
+        side = "sell" if plan.side == "buy" else "buy"
+        slip = D("0.05")
+        raw = plan.limit_px * (1 - slip) if side == "sell" else plan.limit_px * (1 + slip)
+        try:
+            px = round_px(raw, side, coin.sz_decimals, coin.market == "spot")
+        except ValueError:
+            self.note(f"flat failed {plan.coin} bad px")
+            return
+        close = replace(
+            plan,
+            side=side,
+            sz=sz,
+            limit_px=px,
+            reduce_only=plan.market == "perp",
+            stop_px=None,
+            take_px=None,
+            trigger=None,
+            purpose="close",
+            tif="Ioc",
+            cloid=make_cloid(plan.cloid, "partial-flat"),
+        )
+        try:
+            result = self.transport(close, build_action(close))
+        except Exception as exc:
+            self.note(f"flat failed {plan.coin} {exc.__class__.__name__}")
+            return
+        trouble = order_problem(result)
+        if trouble:
+            self.note(f"flat failed {plan.coin} {trouble}")
+        else:
+            self.note(f"flat partial {plan.coin} {fmt_num(sz)}")
 
     def _mark_unconfirmed(self):
         self.account_gen += 1
@@ -418,6 +586,8 @@ class Session:
             self._agent_secret = key
             self.transport = transport
             self.armed = False
+            self._lev_applied = {}
+            self._lev_failed = {}
             if self.account_gen != gen:
                 self.synced = False
                 self.note("account " + mode)
@@ -442,6 +612,11 @@ class Session:
         self.spot_known = True
         self.account_gen += 1
         self.liq = {}
+        self.margin = "cross"
+        self.spot_usdc = D(0)
+        self.free_margin = None
+        self._lev_applied = {}
+        self._lev_failed = {}
         self.broker = SimBroker(self.paper_equity)
         self.day_start = self.paper_equity
         self.sent = set()
@@ -463,6 +638,9 @@ class Session:
     def _install_exchange(self, state, spot_state=None):
         summary = state.get("marginSummary") or {}
         equity = D(str(summary.get("accountValue") or "0"))
+        used = D(str(summary.get("totalMarginUsed") or "0"))
+        free = equity - used
+        self.free_margin = free if free > 0 else D(0)
         pos = {}
         liq = {}
         for row in state.get("assetPositions") or []:
@@ -483,8 +661,11 @@ class Session:
         self.live_equity = equity
         if spot_state is None:
             self.spot_known = False
+            self.spot_usdc = D(0)
         else:
-            self.broker.spot = _spot_balances(spot_state)
+            balances, usdc = _spot_balances(spot_state)
+            self.broker.spot = balances
+            self.spot_usdc = usdc
             self.spot_known = True
 
     def set_coin(self, name, on, force=False):
@@ -606,6 +787,11 @@ class Session:
                     book.mark = prev.mark
                     book.book_ts = prev.book_ts
                     book.synthetic = False
+                # the ctx payload has no real size. keep the summed book until the next snapshot
+                if prev and prev.depth and not book.depth:
+                    book.bid_sz = prev.bid_sz
+                    book.ask_sz = prev.ask_sz
+                    book.depth = True
                 self.books[name] = book
 
     def touch_mids(self, mids: dict, now_ms: int) -> int:
@@ -670,13 +856,53 @@ class Session:
                 return False
             book.bid = bid
             book.ask = ask
+            # a later snapshot owns the size. the top alone is often a $10 lot
+            if not book.depth:
+                if bid_sz > 0:
+                    book.bid_sz = bid_sz
+                if ask_sz > 0:
+                    book.ask_sz = ask_sz
+            book.mark = (bid + ask) / 2
+            book.book_ts = now_ms
+            book.synthetic = False
+            self.mid_ms = now_ms
+            return True
+
+    def touch_depth(self, key, levels, now_ms) -> bool:
+        # size the gate can see is whatever sits inside the same slippage the limit uses
+        if not isinstance(levels, (list, tuple)) or len(levels) < 2:
+            return False
+        bids, asks = levels[0], levels[1]
+        if not isinstance(bids, list) or not isinstance(asks, list) or not bids or not asks:
+            return False
+        if not isinstance(bids[0], dict) or not isinstance(asks[0], dict):
+            return False
+        with self.lock:
+            name = self._name_for(key)
+            book = self.books.get(name) if name else None
+            if book is None:
+                return False
+            try:
+                bid = float(bids[0]["px"])
+                ask = float(asks[0]["px"])
+            except (KeyError, TypeError, ValueError):
+                return False
+            if bid <= 0 or ask < bid:
+                return False
+            slip = float(self.limits.max_slippage_bps) / 10_000
+            mid = (bid + ask) / 2
+            bid_sz = _size_in_band(bids, mid * (1 - slip), False)
+            ask_sz = _size_in_band(asks, mid * (1 + slip), True)
+            book.bid = bid
+            book.ask = ask
             if bid_sz > 0:
                 book.bid_sz = bid_sz
             if ask_sz > 0:
                 book.ask_sz = ask_sz
-            book.mark = (bid + ask) / 2
+            book.mark = mid
             book.book_ts = now_ms
             book.synthetic = False
+            book.depth = True
             self.mid_ms = now_ms
             return True
 
@@ -782,6 +1008,7 @@ class Session:
                 "positions": positions,
                 "log": list(self.log),
                 "risk": _risk_public(self.limits),
+                "margin": self.margin,
                 "ceilings": _ceilings(),
                 "strategies": [s.as_dict() for s in self.strategies],
                 "last_error": self.last_error,
@@ -791,6 +1018,10 @@ class Session:
                     "agent": self.agent_address,
                     "key_loaded": bool(self._agent_secret),
                     "arm_file": arm_ready,
+                },
+                "pockets": {
+                    "perp_free": None if self.mode in ("paper", "backtest") or self.free_margin is None else float(self.free_margin),
+                    "spot_usdc": None if self.mode in ("paper", "backtest") else float(self.spot_usdc),
                 },
             }
 
@@ -810,6 +1041,8 @@ class Session:
                         "hip3": coin.hip3,
                         "delisted": coin.delisted,
                         "max_leverage": coin.max_leverage,
+                        "leverage": use_leverage(self.limits, coin, self.margin, self.leverage.get(name, 1))[0],
+                        "isolated_only": coin.isolated_only,
                         "sz_decimals": coin.sz_decimals,
                         "enabled": name in self.enabled,
                         "forced": name in self.forced,
@@ -869,23 +1102,31 @@ def _ceilings():
     return ceilings()
 
 
-def _spot_balances(state) -> dict:
+def _spot_balances(state):
     out = {}
+    usdc = D(0)
     if not isinstance(state, dict):
-        return out
+        return out, usdc
     for row in state.get("balances") or []:
         if not isinstance(row, dict):
             continue
         coin = row.get("coin")
-        if not isinstance(coin, str) or not coin or coin == "USDC":
+        if not isinstance(coin, str) or not coin:
             continue
         try:
             total = D(str(row.get("total") or "0"))
+            hold = D(str(row.get("hold") or "0"))
         except Exception:
             continue
-        if total > 0:
-            out[coin] = total
-    return out
+        free = total - hold
+        if free < 0:
+            free = D(0)
+        if coin == "USDC":
+            usdc = free
+            continue
+        if free > 0:
+            out[coin] = free
+    return out, usdc
 
 
 def _addr_ok(value) -> bool:

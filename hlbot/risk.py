@@ -15,6 +15,9 @@ class Gate:
     limits: object
     enabled: set
     forced: set
+    margin: str = "cross"
+    # coin name -> the leverage the desk will set. missing means 1.
+    leverage: dict | None = None
 
 
 def _loss(account: Account, limits) -> bool:
@@ -30,9 +33,30 @@ def _liquid(book: Book, limits) -> bool:
     return book.spread_bps <= limits.max_spread_bps and book.day_ntl >= limits.min_day_volume_usd
 
 
-def _liq_room(use_lev: Decimal, max_lev: Decimal) -> Decimal:
-    mmr = Decimal(1) / (Decimal(2) * max_lev)
-    return (Decimal(1) / use_lev) - mmr
+def _picked(gate, name):
+    raw = getattr(gate, "leverage", None)
+    if isinstance(raw, dict) and name in raw:
+        return raw[name]
+    return 1
+
+
+def use_leverage(limits, coin, margin="cross", chosen=1):
+    # spot never borrows. a perp uses the number picked for that coin, and never past the exchange max.
+    if coin is None or coin.market != "perp":
+        return 1, True
+    if coin.max_leverage <= 0:
+        return 1, False
+    try:
+        n = int(chosen)
+    except (TypeError, ValueError):
+        n = 1
+    cap = int(coin.max_leverage)
+    if n > cap:
+        n = cap
+    if n < 1:
+        n = 1
+    cross = margin != "isolated" and not coin.isolated_only
+    return n, cross
 
 
 def decide(intent, book, coin, account, gate, now_ms, mids) -> OrderPlan | Reject:
@@ -70,16 +94,19 @@ def decide(intent, book, coin, account, gate, now_ms, mids) -> OrderPlan | Rejec
 
     thin = not _liquid(book, limits)
     spot = coin.market == "spot"
+    closing = intent.purpose == "close"
     try:
-        px = _limit_px(mid, intent.side, limits, thin, coin)
+        px = _limit_px(mid, intent.side, limits, thin, coin, closing)
     except ValueError:
         return Reject(name, "bad px")
 
-    dev = D(limits.max_entry_deviation)
-    if intent.side == "buy" and px > mid * (1 + dev):
-        return Reject(name, "deviation")
-    if intent.side == "sell" and px < mid * (1 - dev):
-        return Reject(name, "deviation")
+    # entries stay near the mid. a close is allowed through, or a wide book never flattens.
+    if not closing:
+        dev = D(limits.max_entry_deviation)
+        if intent.side == "buy" and px > mid * (1 + dev):
+            return Reject(name, "deviation")
+        if intent.side == "sell" and px < mid * (1 - dev):
+            return Reject(name, "deviation")
 
     stop_px = None
     take_px = None
@@ -96,18 +123,32 @@ def decide(intent, book, coin, account, gate, now_ms, mids) -> OrderPlan | Rejec
             stop_px, take_px = _targets(mid, dist, intent, coin, spot)
         except ValueError:
             return Reject(name, "bad px")
+        # a stop that rounds onto the mid is rejected by the exchange as a bad trigger,
+        # and the entry is rejected with it.
+        if intent.side == "buy" and stop_px >= mid:
+            return Reject(name, "stop too tight")
+        if intent.side == "sell" and stop_px <= mid:
+            return Reject(name, "stop too tight")
+        if take_px is not None and (
+            (intent.side == "buy" and take_px <= mid) or (intent.side == "sell" and take_px >= mid)
+        ):
+            take_px = None
 
     if account.equity <= 0 and intent.purpose == "open":
         return Reject(name, "no equity")
 
-    original, sz, err = _size(intent, account, coin, book, limits, mid, px, pos, thin, dist, mids)
+    chosen = _picked(gate, name)
+    original, sz, err = _size(intent, account, coin, book, limits, mid, px, pos, thin, dist, mids, chosen)
     if err:
         return Reject(name, err)
 
     sz = floor_sz(sz, coin.sz_decimals)
     if sz <= 0:
         return Reject(name, "dust")
-    if intent.purpose == "open" and sz * mid < MIN_NOTIONAL:
+    # the exchange measures the limit, and a short limit sits under the mid
+    if intent.purpose == "open" and sz * px < MIN_NOTIONAL:
+        if original * px >= MIN_NOTIONAL:
+            return Reject(name, "thin book")
         return Reject(name, "min notional")
 
     cloid = make_cloid(intent.strategy, name, intent.bar_ts, intent.side, intent.purpose)
@@ -116,6 +157,7 @@ def decide(intent, book, coin, account, gate, now_ms, mids) -> OrderPlan | Rejec
 
     step = Decimal(10) ** (-coin.sz_decimals) if coin.sz_decimals else Decimal(1)
     clipped = sz + step < original
+    lev_n, cross = use_leverage(limits, coin, getattr(gate, "margin", "cross"), chosen)
 
     return OrderPlan(
         coin=name,
@@ -134,6 +176,8 @@ def decide(intent, book, coin, account, gate, now_ms, mids) -> OrderPlan | Rejec
         hl_coin=coin.api or coin.name,
         sz_decimals=coin.sz_decimals,
         clipped=clipped,
+        leverage=lev_n,
+        cross=cross,
     )
 
 
@@ -163,9 +207,8 @@ def _block_open(intent, book, coin, account, gate, now_ms, mids, pos) -> str | N
     if coin.market == "perp":
         if coin.max_leverage <= 0:
             return "liq distance"
-        use = min(D(limits.max_leverage), D(coin.max_leverage))
-        if _liq_room(use, D(coin.max_leverage)) < D(limits.min_liq_distance):
-            return "liq distance"
+        # the coin's own max is a choice, with a warning on the page. an open position
+        # that is already close to its liquidation still blocks a new entry.
         for other, lp in account.liq.items():
             mark = mids.get(other)
             if mark is None or mark <= 0:
@@ -175,13 +218,17 @@ def _block_open(intent, book, coin, account, gate, now_ms, mids, pos) -> str | N
     return None
 
 
-def _limit_px(mid, side, limits, thin, coin) -> Decimal:
-    slip = D(limits.max_slippage_bps) / Decimal(10_000)
-    if thin:
-        slip = slip / 2
-    dev = D(limits.max_entry_deviation)
-    if slip > dev:
-        slip = dev
+def _limit_px(mid, side, limits, thin, coin, closing=False) -> Decimal:
+    # 8 bps is for getting in. ZRO on testnet sits ~30 bps wide, and that exit never reached the bid.
+    if closing:
+        slip = Decimal("0.05")
+    else:
+        slip = D(limits.max_slippage_bps) / Decimal(10_000)
+        if thin:
+            slip = slip / 2
+        dev = D(limits.max_entry_deviation)
+        if slip > dev:
+            slip = dev
     raw = mid * (1 + slip) if side == "buy" else mid * (1 - slip)
     return round_px(raw, side, coin.sz_decimals, coin.market == "spot")
 
@@ -206,7 +253,7 @@ def _targets(mid, dist, intent, coin, spot):
     return stop_px, take_px
 
 
-def _size(intent, account, coin, book, limits, mid, px, pos, thin, dist, mids):
+def _size(intent, account, coin, book, limits, mid, px, pos, thin, dist, mids, chosen=1):
     if intent.purpose == "close":
         want = abs(pos) if intent.qty is None else min(D(intent.qty), abs(pos))
         if want <= 0:
@@ -227,9 +274,8 @@ def _size(intent, account, coin, book, limits, mid, px, pos, thin, dist, mids):
 
     original = want
     equity = account.equity
-    lev = min(D(limits.max_leverage), D(coin.max_leverage))
-    if coin.market == "spot":
-        lev = Decimal(1)
+    lev_n, _cross = use_leverage(limits, coin, "cross", chosen)
+    lev = Decimal(lev_n)
     coin_cap = min(D(limits.max_coin_frac) * equity, lev * equity)
     order_cap = D(limits.max_order_frac) * equity
     if thin:
@@ -247,7 +293,22 @@ def _size(intent, account, coin, book, limits, mid, px, pos, thin, dist, mids):
     # spot inventory is already inside equity. gross here is perp notionals only
     room = D(limits.max_gross_frac) * equity - used
     ntl_cap = min(order_cap, coin_cap, room)
+    margin_cap = None
+    if coin.market == "perp" and account.free_margin is not None:
+        budget = account.free_margin if account.free_margin > 0 else Decimal(0)
+        # leverage 1 can use the free margin. above 1, the liq cushion stays unspent.
+        if lev_n > 1:
+            keep = D(limits.min_liq_distance)
+            if keep < 0:
+                keep = Decimal(0)
+            if keep > Decimal("0.9"):
+                keep = Decimal("0.9")
+            budget = budget * (Decimal(1) - keep)
+        margin_cap = budget * lev
+        ntl_cap = min(ntl_cap, margin_cap)
     if ntl_cap <= 0:
+        if margin_cap is not None and margin_cap <= 0:
+            return original, Decimal(0), "margin"
         return original, Decimal(0), "gross"
     want = min(want, ntl_cap / mid)
 
@@ -258,6 +319,8 @@ def _size(intent, account, coin, book, limits, mid, px, pos, thin, dist, mids):
             free = account.spot.get(coin.quote, Decimal(0))
         if px <= 0:
             return original, Decimal(0), "bad px"
+        if free <= 0:
+            return original, Decimal(0), "margin"
         want = min(want, free / px)
 
     part = D(limits.book_participation)

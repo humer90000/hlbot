@@ -228,6 +228,48 @@ def test_state_hides_the_agent_secret(client, session):
     assert bad.status_code == 400
 
 
+def test_depth_inside_the_slip_counts_and_a_dust_top_does_not(session):
+    from decimal import Decimal
+
+    from hlbot.models import Intent
+    from hlbot.risk import Gate, decide
+    from tests.conftest import account
+
+    session.books["BTC"] = book(bid=61546, ask=61566, bid_sz=0.00017, ask_sz=0.00017, mark=61556, day_ntl=2e7)
+    levels = [
+        [
+            {"px": "61546", "sz": "0.00017"},
+            {"px": "61533", "sz": "0.00224"},
+        ],
+        [
+            {"px": "61566", "sz": "0.00017"},
+            {"px": "61591", "sz": "0.00244"},
+            {"px": "61600", "sz": "0.00020"},
+            {"px": "61608", "sz": "0.00324"},
+        ],
+    ]
+    assert session.touch_depth("BTC", levels, 50)
+    assert abs(session.books["BTC"].ask_sz - 0.00281) < 1e-9
+    assert session.touch_top("BTC", [{"px": "61546", "sz": "0.00001"}, {"px": "61566", "sz": "0.00001"}], 60)
+    assert abs(session.books["BTC"].ask_sz - 0.00281) < 1e-9
+    session.ingest_books({"BTC": book(bid=61540, ask=61570, bid_sz=9, ask_sz=9, day_ntl=2e7)})
+    kept = session.books["BTC"]
+    assert abs(kept.ask_sz - 0.00281) < 1e-9
+    assert kept.ask == 61570
+    intent = Intent("t", "BTC", "buy", "open", 1, qty=1, stop_dist=1800, take_r=2)
+    d = decide(
+        intent,
+        kept,
+        session.coins["BTC"],
+        account(),
+        Gate(session.limits, {"BTC"}, set()),
+        kept.book_ts,
+        {"BTC": Decimal("61555")},
+    )
+    assert d.sz > Decimal("0.0002")
+    assert d.sz <= Decimal("0.00029")
+
+
 def test_page_hides_the_gate_and_offers_the_desk(client):
     page = client.get("/").text
     assert "[hidden]" in page

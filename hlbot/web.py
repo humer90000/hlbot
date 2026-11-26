@@ -85,7 +85,33 @@ def create_app(session, token: str, reload_fn=None) -> FastAPI:
             return JSONResponse({"error": str(exc)}, status_code=400)
         with session.lock:
             session.limits = limits
+            session._lev_applied.clear()
+            session._lev_failed.clear()
         return {"ok": True, "risk": session.public_state()["risk"]}
+
+    @app.post("/api/margin")
+    async def save_margin(request: Request):
+        body = await request.json()
+        if not isinstance(body, dict):
+            return JSONResponse({"error": "margin"}, status_code=400)
+        err = session.set_margin(str(body.get("margin") or ""))
+        if err:
+            return JSONResponse({"error": err}, status_code=400)
+        return {"ok": True, "margin": session.margin}
+
+    @app.post("/api/leverage")
+    async def save_leverage(request: Request):
+        body = await request.json()
+        if not isinstance(body, dict):
+            return JSONResponse({"error": "leverage"}, status_code=400)
+        name = str(body.get("coin") or "")
+        err = session.set_leverage(name, body.get("leverage"))
+        if err:
+            return JSONResponse({"error": err}, status_code=400)
+        coin = session.coins.get(name)
+        n = int(session.leverage.get(name, 1))
+        top = int(coin.max_leverage) if coin is not None else n
+        return {"ok": True, "coin": name, "leverage": n, "maxed": top > 1 and n == top}
 
     @app.post("/api/halt")
     def halt():
