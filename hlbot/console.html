@@ -510,7 +510,7 @@ function px(n) {
 }
 function money(n) {
   const v = Number(n);
-  const cls = v < 0 ? "neg" : "pos";
+  const cls = v < 0 ? "neg" : v > 0 ? "pos" : "";
   const text = (v > 0 ? "+" : "") + v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   return { cls, text };
 }
@@ -580,32 +580,37 @@ function paintChrome() {
 
 function paintChips() {
   const host = $("markets");
-  host.innerHTML = "";
-  MARKETS.forEach(([id, label]) => {
-    const count = coins.filter((c) => {
-      const prev = market;
-      market = id;
-      const ok = inMarket(c);
-      market = prev;
-      return ok;
-    }).length;
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = market === id ? "on" : "";
-    b.textContent = label + " " + count;
-    b.onclick = () => { market = id; page = 0; paintChips(); paintTable(); };
-    host.appendChild(b);
+  const marketItems = MARKETS.map(([id, label]) => {
+    const prev = market;
+    market = id;
+    const n = coins.filter(inMarket).length;
+    market = prev;
+    return [id, label + " " + n, market === id ? "on" : ""];
   });
-  const chips = $("chips");
-  chips.innerHTML = "";
-  VIEWS.forEach(([id, label]) => {
-    const count = coins.filter((c) => inMarket(c) && (id === "all" || (id === "liquid" && c.liquid) || (id === "on" && c.enabled) || (id === "pos" && Math.abs(c.position) > 0))).length;
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "chip" + (filter === id ? " on" : "");
-    b.textContent = label + " " + count;
-    b.onclick = () => { filter = id; page = 0; paintChips(); paintTable(); };
-    chips.appendChild(b);
+  syncButtons(host, marketItems, (id) => { market = id; page = 0; paintChips(); paintTable(); });
+  const viewItems = VIEWS.map(([id, label]) => {
+    const n = coins.filter((c) => inMarket(c) && (id === "all" || (id === "liquid" && c.liquid) || (id === "on" && c.enabled) || (id === "pos" && Math.abs(c.position) > 0))).length;
+    return [id, label + " " + n, "chip" + (filter === id ? " on" : "")];
+  });
+  syncButtons($("chips"), viewItems, (id) => { filter = id; page = 0; paintChips(); paintTable(); });
+}
+
+function syncButtons(host, items, onPick) {
+  const have = [...host.children];
+  const same = have.length === items.length && have.every((b, i) => b.dataset.id === items[i][0]);
+  if (!same) {
+    host.innerHTML = "";
+    items.forEach(([id]) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.dataset.id = id;
+      b.onclick = () => onPick(id);
+      host.appendChild(b);
+    });
+  }
+  [...host.children].forEach((b, i) => {
+    b.className = items[i][2];
+    b.textContent = items[i][1];
   });
 }
 
@@ -951,6 +956,19 @@ function advancedForm() {
   return form;
 }
 
+function readControl(el) {
+  const k = el.dataset.key;
+  if (el.type === "checkbox") return el.checked;
+  if (k === "coins") return el.value.split(",").map((x) => x.trim()).filter(Boolean);
+  if (el.type === "number") {
+    if (el.value.trim() === "") return null;
+    const n = Number(el.value);
+    return Number.isFinite(n) ? n : null;
+  }
+  if (k === "name" || k === "kind") return el.value.trim();
+  return el.value;
+}
+
 function field(key, label, value, step, tip) {
   const wrap = document.createElement("div");
   wrap.className = "field";
@@ -1048,12 +1066,7 @@ async function saveStrat(card) {
     if (raw) body = JSON.parse(raw.value);
     else {
       body = JSON.parse(card.dataset.original);
-      card.querySelectorAll("[data-key]").forEach((el) => {
-        const k = el.dataset.key;
-        if (el.type === "checkbox") body[k] = el.checked;
-        else if (k === "coins") body[k] = el.value.split(",").map((x) => x.trim()).filter(Boolean);
-        else body[k] = el.type === "number" ? Number(el.value) : el.value;
-      });
+      card.querySelectorAll("[data-key]").forEach((el) => { body[el.dataset.key] = readControl(el); });
     }
     await api("/api/strategies", { method: "POST", body: JSON.stringify(body) });
     toast("saved " + body.name);
@@ -1083,12 +1096,7 @@ async function useStrat(name) {
 }
 async function createSimple(form) {
   const body = { enabled: false, coins: [] };
-  form.querySelectorAll("[data-key]").forEach((el) => {
-    const k = el.dataset.key;
-    if (k === "kind" || k === "name") body[k] = el.value.trim();
-    else if (k === "coins") body[k] = el.value.split(",").map((x) => x.trim()).filter(Boolean);
-    else body[k] = el.type === "number" ? Number(el.value) : el.value;
-  });
+  form.querySelectorAll("[data-key]").forEach((el) => { body[el.dataset.key] = readControl(el); });
   await postStrat(body);
 }
 async function createRaw(text) {

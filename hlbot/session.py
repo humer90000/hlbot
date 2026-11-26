@@ -76,6 +76,9 @@ class Session:
         self.beat_ms = 0
         self.pos_bars = {}
         self.bar_seen = {}
+        self.settled = set()
+        self.said = {}
+        self.pull_candles = False
         self.log = deque(maxlen=80)
         self.lock = threading.Lock()
         self.journal = Journal(journal_path) if journal_path else None
@@ -204,15 +207,24 @@ class Session:
                 self.note(f"{intent.coin} one coin")
                 continue
             seen.add(intent.coin)
+            stamp = (intent.strategy, intent.coin, intent.bar_ts, intent.side, intent.purpose)
+            if stamp in self.settled:
+                continue
             coin = self.coins.get(intent.coin)
             book = self.books.get(intent.coin)
             acct = self._account()
             result = decide(intent, book, coin, acct, self.gate(), self.now_ms, self.mids())
             out.append(result)
             if isinstance(result, Reject):
-                self.note(f"{intent.coin} {intent.purpose} {result.reason}")
-                self._journal("reject", intent.coin, result.reason)
+                # stale / not armed can clear later in the same bar. the rest will not.
+                if result.reason not in ("not armed", "halted", "stale book", "desynced"):
+                    self.settled.add(stamp)
+                if self.said.get(stamp) != result.reason:
+                    self.said[stamp] = result.reason
+                    self.note(f"{intent.coin} {intent.purpose} {result.reason}")
+                    self._journal("reject", intent.coin, result.reason)
                 continue
+            self.settled.add(stamp)
             self.sent.add(result.cloid)
             acct.sent.add(result.cloid)
             self.note(
@@ -300,6 +312,9 @@ class Session:
                 book.bar_ts = 0
             self.bar_seen.clear()
             self.pos_bars.clear()
+            self.settled.clear()
+            self.said.clear()
+            self.pull_candles = True
             self.note("interval " + value)
         return None
 

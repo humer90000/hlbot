@@ -138,7 +138,29 @@ def test_interval_switch_drops_the_old_bars(session):
     assert session.books["BTC"].closes == ()
     assert session.books["BTC"].bar_ts == 0
     assert session.bar_seen == {}
+    assert session.pull_candles is True
     assert session.set_interval("1h") is None
+
+
+def test_the_same_unarmed_bar_is_not_logged_twice(session):
+    highs = [101.0] * 21
+    lows = [99.0] * 21
+    closes = [100.0] * 21
+    highs[-1], lows[-1], closes[-1] = 104, 101, 103
+    session.books["BTC"] = book(
+        bid=103, ask=103, mark=103, book_ts=1_000_000, bar_ts=5_000,
+        highs=tuple(highs), lows=tuple(lows), closes=tuple(closes),
+    )
+    session.enabled.add("BTC")
+    session.step()
+    session.step()
+    notes = [line.split(" ", 1)[1] for line in session.log]
+    assert notes.count("BTC open not armed") == 1
+    rejects = [kind for _, kind, _, _ in session.journal.recent(20)]
+    assert rejects.count("reject") == 1
+    session.armed = True
+    session.step()
+    assert session.broker.pos["BTC"][0] > 0
 
 
 def test_state_hides_the_agent_secret(client, session):

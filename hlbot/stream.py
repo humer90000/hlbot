@@ -11,7 +11,7 @@ def start(session, stop, prices, mids, candles):
     threading.Thread(target=_clock, args=(session, stop), name="hlbot-clock", daemon=True).start()
     threading.Thread(target=_socket, args=(session, stop), name="hlbot-ws", daemon=True).start()
     threading.Thread(target=_books, args=(session, stop, prices, candles), name="hlbot-books", daemon=True).start()
-    threading.Thread(target=_mids, args=(session, stop, mids), name="hlbot-mids", daemon=True).start()
+    threading.Thread(target=_mids, args=(session, stop, mids, candles), name="hlbot-mids", daemon=True).start()
 
 
 def _clock(session, stop):
@@ -121,6 +121,8 @@ def _subscribe_enabled(session, sock):
         coin = session.coins.get(name)
         api = (coin.api or name) if coin else name
         try:
+            if name not in enabled:
+                sock.send(json.dumps({"method": "unsubscribe", "subscription": {"type": "bbo", "coin": api}}))
             sock.send(
                 json.dumps(
                     {"method": "unsubscribe", "subscription": {"type": "candle", "coin": api, "interval": old}}
@@ -150,11 +152,17 @@ def _subscribe_enabled(session, sock):
         _SUBBED.add(name)
 
 
-def _mids(session, stop, mids):
+def _mids(session, stop, mids, candles):
     while not stop.is_set():
         sock = _SOCK.get("ws")
         if sock is not None:
             _subscribe_enabled(session, sock)
+        if session.pull_candles:
+            session.pull_candles = False
+            try:
+                candles(session)
+            except Exception as exc:
+                session.last_error = exc.__class__.__name__
         age = session.quote_age_ms()
         if session.feed != "ws" or age is None or age > 2000:
             try:
