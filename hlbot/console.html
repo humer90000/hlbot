@@ -586,7 +586,18 @@ function paintChrome() {
   armBtn.textContent = state.armed ? "Disarm" : "Arm";
   armBtn.className = state.armed ? "btn" : "btn primary";
   const tape = $("tape");
-  if (tab === "tape" && document.activeElement !== tape) tape.textContent = (state.log || []).join("\n") || "quiet.";
+  if (tab === "tape" && document.activeElement !== tape) {
+    const next = (state.log || []).map(tapeLine).join("\n") || "quiet.";
+    if (tape.textContent !== next) tape.textContent = next;
+  }
+}
+function tapeLine(line) {
+  const sp = line.indexOf(" ");
+  const ms = Number(line.slice(0, sp));
+  if (sp < 1 || !Number.isFinite(ms) || ms < 1e12) return line;
+  const d = new Date(ms);
+  const p = (n) => String(n).padStart(2, "0");
+  return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds()) + "  " + line.slice(sp + 1);
 }
 
 function paintChips() {
@@ -1118,6 +1129,15 @@ async function createRaw(text) {
   }
 }
 async function postStrat(body) {
+  const exists = (state.strategies || []).some((s) => s.name === body.name);
+  if (exists) {
+    const ok = await ask(
+      "Replace " + body.name,
+      "this name is already on the desk. the new one replaces it, and it starts off.",
+      "Replace"
+    );
+    if (!ok) return;
+  }
   try {
     await api("/api/strategies", { method: "POST", body: JSON.stringify(body) });
     toast("added " + body.name);
@@ -1207,7 +1227,10 @@ function describe(key, value, cap) {
 }
 async function saveRisk() {
   const body = {};
-  $("pane-risk").querySelectorAll("input[name]").forEach((el) => { body[el.name] = Number(el.value); });
+  $("pane-risk").querySelectorAll("input[name]").forEach((el) => {
+    const raw = el.value.trim();
+    body[el.name] = raw === "" ? null : Number(raw);
+  });
   try {
     await api("/api/risk", { method: "POST", body: JSON.stringify(body) });
     riskDirty = false;

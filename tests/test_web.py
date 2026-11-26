@@ -60,6 +60,14 @@ def test_strategy_roundtrip_and_arm(client):
     assert client.get("/api/state", headers=h).json()["armed"] is False
 
 
+def test_blank_risk_number_is_rejected(client):
+    h = {"Authorization": "Bearer test-token"}
+    res = client.post("/api/risk", json={"max_slippage_bps": None}, headers=h)
+    assert res.status_code == 400
+    assert res.json()["error"] == "max_slippage_bps not a number"
+    assert client.get("/api/state", headers=h).json()["risk"]["max_slippage_bps"] == 8
+
+
 def test_blank_strategy_fields_and_coin_case(client):
     h = {"Authorization": "Bearer test-token"}
     base = {
