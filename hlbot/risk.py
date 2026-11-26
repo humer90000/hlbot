@@ -145,6 +145,8 @@ def _block_open(intent, book, coin, account, gate, now_ms, mids, pos) -> str | N
         return "halted"
     if not account.synced:
         return "desynced"
+    if coin.market == "spot" and not account.spot_known:
+        return "desynced"
     if coin.name not in gate.enabled:
         return "disabled"
     if now_ms - book.book_ts > limits.stale_ms:

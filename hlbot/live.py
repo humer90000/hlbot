@@ -8,6 +8,30 @@ def _f(x) -> float:
     return float(fmt_num(x))
 
 
+def order_problem(result) -> str | None:
+    if not isinstance(result, dict):
+        return None
+    if result.get("status") not in (None, "ok"):
+        return "rejected"
+    response = result.get("response")
+    if not isinstance(response, dict):
+        return None
+    data = response.get("data")
+    if not isinstance(data, dict):
+        return None
+    statuses = data.get("statuses")
+    if not isinstance(statuses, list):
+        return None
+    for row in statuses:
+        if not isinstance(row, dict) or not row.get("error"):
+            continue
+        text = str(row["error"]).replace("\n", " ").strip()
+        if not text or "0x" in text or len(text) > 80:
+            return "rejected"
+        return text
+    return None
+
+
 def make_sender(base_url, account_address, vault_address, private_key):
     if not private_key:
         raise RuntimeError("HL_AGENT_KEY is empty")

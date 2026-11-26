@@ -136,7 +136,30 @@ def test_touch_top_writes_the_live_bid(session):
     assert session.books["BTC"].closes == (3.5, 4.0)
     assert session.books["BTC"].bar_ts == 20
     assert session.push_candle("BTC", {"t": 30, "h": "6", "l": "4", "c": "5", "i": "1h"}) is False
+    assert session.push_candle(
+        "BTC",
+        {"t": session.now_ms, "T": session.now_ms + 60_000, "h": "200", "l": "50", "c": "180", "i": "15m"},
+    ) is False
+    assert session.books["BTC"].closes[-1] == 4.0
     assert session.books["BTC"].bar_ts == 20
+    assert session.books["BTC"].bar_ts == 20
+
+
+def test_an_open_candle_is_left_out_of_the_signal(session):
+    from hlbot.feed import apply_candles
+
+    session.books["BTC"] = book()
+    apply_candles(
+        session.books["BTC"],
+        [
+            {"t": 0, "h": "2", "l": "1", "c": "1.5", "i": "15m"},
+            {"t": 900_000, "T": 1_800_000, "h": "9", "l": "1", "c": "8", "i": "15m"},
+        ],
+        "15m",
+        session.now_ms,
+    )
+    assert session.books["BTC"].closes == (1.5,)
+    assert session.books["BTC"].bar_ts == 0
 
 
 def test_a_live_top_survives_the_mid_refresh(session):

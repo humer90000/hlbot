@@ -105,6 +105,8 @@ def resolve_limits(raw) -> Limits:
     for key, value in merged.items():
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
             raise ConfigError(f"{key} not a number")
+        if float(value) <= 0:
+            raise ConfigError(f"{key} {value} below floor 0")
         how, bound = _CAP[key]
         if how == "max" and float(value) > bound:
             raise ConfigError(f"{key} {value} above ceiling {bound}")

@@ -3,6 +3,8 @@ def test_page_and_auth(client):
     assert page.status_code == 200
     assert "flatten" in page.text
     assert client.get("/api/state").status_code == 401
+    assert client.get("/api/state", headers={"Authorization": "Bearer wrong"}).status_code == 401
+    assert client.get("/api/state", headers={"Authorization": "bearer test-token"}).status_code == 401
     for path in ("/docs", "/redoc", "/openapi.json"):
         hidden = client.get(path)
         assert hidden.status_code == 401

@@ -107,9 +107,28 @@ def candle_body(coin: str, now_ms: int, interval: str = "15m", bars: int = 40) -
     }
 
 
-def apply_candles(book: Book, rows, interval=None) -> None:
+def _candle_closed(row, interval, now_ms) -> bool:
+    # T is the candle's own end. a missing T means open time plus the bar size.
+    end = row.get("T")
+    if end not in (None, ""):
+        try:
+            return int(end) <= now_ms
+        except (TypeError, ValueError):
+            pass
+    step = INTERVALS.get(interval or "", 0)
+    if not step:
+        return True
+    try:
+        return int(row["t"]) + step <= now_ms
+    except (TypeError, ValueError, KeyError):
+        return False
+
+
+def apply_candles(book: Book, rows, interval=None, now_ms=None) -> None:
     if interval:
         rows = [r for r in rows if not r.get("i") or r.get("i") == interval]
+    if now_ms:
+        rows = [r for r in rows if _candle_closed(r, interval, now_ms)]
     rows = sorted(rows, key=lambda r: int(r["t"]))
     if not rows:
         return

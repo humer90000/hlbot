@@ -53,6 +53,16 @@ def test_stale_book_blocks_entry_but_not_the_exit():
     assert d.sz == Decimal("0.2")
 
 
+def test_spot_you_already_hold_is_not_bought_again():
+    coin = coins()["PURR/USDC"]
+    b = book()
+    mids = {"PURR/USDC": Decimal(100)}
+    held = account(spot={"PURR": Decimal("3")})
+    assert decide(_open(coin="PURR/USDC"), b, coin, held, _gate(enabled=("PURR/USDC",)), 1_000_000, mids).reason == "in position"
+    unknown = account(spot_known=False)
+    assert decide(_open(coin="PURR/USDC"), b, coin, unknown, _gate(enabled=("PURR/USDC",)), 1_000_000, mids).reason == "desynced"
+
+
 def test_not_armed_halt_desync_daily_loss():
     coin = coins()["BTC"]
     b = book()
@@ -148,6 +158,10 @@ def test_config_refuses_a_loose_ceiling():
         resolve_limits({"min_liq_distance": 0.01})
     with pytest.raises(ConfigError):
         resolve_limits({"stale_ms": 10_000})
+    with pytest.raises(ConfigError):
+        resolve_limits({"max_daily_loss_frac": -1})
+    with pytest.raises(ConfigError):
+        resolve_limits({"book_participation": 0})
     with pytest.raises(ConfigError):
         check_bind("0.0.0.0", expose=False)
     assert check_bind("127.0.0.1", False) == "127.0.0.1"

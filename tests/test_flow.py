@@ -333,6 +333,71 @@ def test_journal_rows(session):
     assert any(kind == "fill" for _, kind, _, _ in rows)
 
 
+def test_a_live_send_waits_for_the_account_before_opening_again(tmp_path):
+    from hlbot.config import resolve_limits
+    from hlbot.session import Session
+    from tests.conftest import coins, donchian
+
+    sent = []
+
+    def transport(plan, action):
+        sent.append(plan.coin)
+        return {
+            "status": "ok",
+            "response": {"data": {"statuses": [{"error": "Insufficient margin"}]}},
+        }
+
+    arm = tmp_path / "ARM"
+    arm.write_text("yes")
+    s = Session(
+        limits=resolve_limits({}),
+        coins=coins(),
+        strategies=[donchian()],
+        mode="live",
+        arm_path=str(arm),
+        transport=transport,
+        frozen=True,
+    )
+    assert s.synced is False
+    assert s.arm() is None
+    flat = {"marginSummary": {"accountValue": "10000"}, "assetPositions": []}
+    spot = {"balances": [{"coin": "USDC", "total": "9"}, {"coin": "PURR", "total": "4"}]}
+    assert s.apply_account(flat, spot, 0) is True
+    assert s.synced is True and s.spot_known is True
+    assert s.broker.spot["PURR"] == Decimal("4")
+    assert "USDC" not in s.broker.spot
+    s.books["BTC"] = _break_book()
+    s.now_ms = 5_000
+    s.enabled.add("BTC")
+    s.step()
+    assert sent == ["BTC"]
+    assert s.synced is False
+    assert any("Insufficient margin" in line for line in s.log)
+    assert s.apply_account(flat, spot, 0) is False
+    again = _break_book()
+    again.bar_ts = 6_000
+    again.book_ts = 6_000
+    s.books["BTC"] = again
+    s.now_ms = 6_000
+    s.step()
+    assert sent == ["BTC"]
+    held = {
+        "marginSummary": {"accountValue": "10000"},
+        "assetPositions": [{"position": {"coin": "BTC", "szi": "0.1", "entryPx": "100"}}],
+    }
+    assert s.apply_account(held, spot, s.account_gen) is True
+    assert s.broker.pos["BTC"][0] == Decimal("0.1")
+    assert s.day_start == Decimal(10_000)
+    later = _break_book()
+    later.bar_ts = 7_000
+    later.book_ts = 7_000
+    s.books["BTC"] = later
+    s.now_ms = 7_000
+    s.step()
+    assert sent == ["BTC"]
+    assert "BTC" in s.broker.pos
+
+
 def test_live_arm_needs_the_file(tmp_path):
     from hlbot.config import resolve_limits
     from hlbot.session import Session

@@ -180,20 +180,26 @@ def _account(session):
         return
     from hlbot.catalog import post_info
 
+    with session.lock:
+        gen = session.account_gen
+        url = session.info_url
+        user = session.account_address
     try:
-        state = post_info(
-            session.info_url,
-            {"type": "clearinghouseState", "user": session.account_address},
-        )
+        state = post_info(url, {"type": "clearinghouseState", "user": user})
     except Exception as exc:
         session.last_error = exc.__class__.__name__
-        session.synced = False
+        with session.lock:
+            if session.account_gen == gen:
+                session.synced = False
         return
+    spot_state = None
+    try:
+        spot_state = post_info(url, {"type": "spotClearinghouseState", "user": user})
+    except Exception as exc:
+        session.last_error = exc.__class__.__name__
     if not isinstance(state, dict) or "marginSummary" not in state:
-        session.synced = False
+        with session.lock:
+            if session.account_gen == gen:
+                session.synced = False
         return
-    with session.lock:
-        day = session.day_start
-        session._install_exchange(state)
-        session.day_start = day
-        session.synced = True
+    session.apply_account(state, spot_state, gen)

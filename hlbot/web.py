@@ -1,3 +1,4 @@
+import secrets
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -20,7 +21,7 @@ def create_app(session, token: str, reload_fn=None) -> FastAPI:
             return await call_next(request)
         if path.startswith("/api/"):
             got = request.headers.get("authorization", "")
-            if got != "Bearer " + token:
+            if not secrets.compare_digest(got, "Bearer " + token):
                 return JSONResponse({"error": "unauthorized"}, status_code=401)
             return await call_next(request)
         return JSONResponse({"error": "unauthorized"}, status_code=401)

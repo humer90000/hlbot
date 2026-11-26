@@ -103,3 +103,4 @@ class Account:
     usdc: Decimal
     sent: set[str] = field(default_factory=set)
     liq: dict[str, Decimal] = field(default_factory=dict)
+    spot_known: bool = True

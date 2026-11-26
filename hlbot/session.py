@@ -71,7 +71,9 @@ class Session:
         self.sent = set()
         self.armed = False
         self.halted = False
-        self.synced = True
+        self.synced = mode in ("paper", "backtest")
+        self.spot_known = mode in ("paper", "backtest")
+        self.account_gen = 0
         self.now_ms = 0
         self.beat_ms = 0
         self.pos_bars = {}
@@ -124,6 +126,7 @@ class Session:
             usdc=self.broker.cash,
             sent=self.sent,
             liq={k: D(v) for k, v in self.liq.items()},
+            spot_known=self.spot_known,
         )
 
     def _equity(self):
@@ -258,11 +261,23 @@ class Session:
             self.note(f"no transport {plan.coin}")
             return None
         try:
-            self.transport(plan, action)
+            result = self.transport(plan, action)
         except Exception as exc:
             self.note(f"send failed {plan.coin} {exc.__class__.__name__}")
+            self._mark_unconfirmed()
             return None
+        from hlbot.live import order_problem
+
+        problem = order_problem(result)
+        if problem:
+            self.note(f"send failed {plan.coin} {problem}")
+        # the fill can land before the next account pull. don't send another open on the old book.
+        self._mark_unconfirmed()
         return None
+
+    def _mark_unconfirmed(self):
+        self.account_gen += 1
+        self.synced = False
 
     def _journal(self, kind, coin, body):
         if self.journal is None:
@@ -379,6 +394,8 @@ class Session:
             def fetch(payload, _url=url):
                 return post_info(_url, payload)
 
+        with self.lock:
+            gen = self.account_gen
         try:
             state = fetch({"type": "clearinghouseState", "user": account})
         except ValueError:
@@ -387,6 +404,10 @@ class Session:
             raise ValueError(exc.__class__.__name__)
         if not isinstance(state, dict) or "marginSummary" not in state:
             raise ValueError("account state")
+        try:
+            spot_state = fetch({"type": "spotClearinghouseState", "user": account})
+        except Exception:
+            spot_state = None
         transport = make_sender(url, account, vault, key)
         with self.lock:
             self.mode = mode
@@ -397,7 +418,13 @@ class Session:
             self._agent_secret = key
             self.transport = transport
             self.armed = False
-            self._install_exchange(state)
+            if self.account_gen != gen:
+                self.synced = False
+                self.note("account " + mode)
+                return {"mode": mode, "agent": wallet.address}
+            self._install_exchange(state, spot_state)
+            self.day_start = self.live_equity
+            self.synced = True
             self.note("account " + mode)
         return {"mode": mode, "agent": wallet.address}
 
@@ -411,13 +438,29 @@ class Session:
         self._agent_secret = ""
         self.live_equity = None
         self.armed = False
+        self.synced = True
+        self.spot_known = True
+        self.account_gen += 1
         self.liq = {}
         self.broker = SimBroker(self.paper_equity)
         self.day_start = self.paper_equity
         self.sent = set()
         self.note("paper")
 
-    def _install_exchange(self, state):
+    def apply_account(self, state, spot_state, gen) -> bool:
+        with self.lock:
+            if self.mode not in ("live", "testnet") or gen != self.account_gen:
+                return False
+            if not isinstance(state, dict) or "marginSummary" not in state:
+                self.synced = False
+                return False
+            day = self.day_start
+            self._install_exchange(state, spot_state)
+            self.day_start = day
+            self.synced = True
+            return True
+
+    def _install_exchange(self, state, spot_state=None):
         summary = state.get("marginSummary") or {}
         equity = D(str(summary.get("accountValue") or "0"))
         pos = {}
@@ -438,8 +481,11 @@ class Session:
         self.broker.pos = pos
         self.liq = liq
         self.live_equity = equity
-        self.day_start = equity
-        self.synced = True
+        if spot_state is None:
+            self.spot_known = False
+        else:
+            self.broker.spot = _spot_balances(spot_state)
+            self.spot_known = True
 
     def set_coin(self, name, on, force=False):
         with self.lock:
@@ -641,7 +687,8 @@ class Session:
             book = self.books.get(name)
             if book is None or not rows:
                 return False
-            apply_candles(book, rows, self.interval)
+            now = self.now_ms or int(time.time() * 1000)
+            apply_candles(book, rows, self.interval, now)
             return True
 
     def push_candle(self, key, row) -> bool:
@@ -652,6 +699,11 @@ class Session:
                 return False
             mark = row.get("i")
             if mark and mark != self.interval:
+                return False
+            now = self.now_ms or int(time.time() * 1000)
+            from hlbot.feed import _candle_closed
+
+            if not _candle_closed(row, self.interval, now):
                 return False
             try:
                 t = int(row["t"])
@@ -815,6 +867,25 @@ def _ceilings():
     from hlbot.config import ceilings
 
     return ceilings()
+
+
+def _spot_balances(state) -> dict:
+    out = {}
+    if not isinstance(state, dict):
+        return out
+    for row in state.get("balances") or []:
+        if not isinstance(row, dict):
+            continue
+        coin = row.get("coin")
+        if not isinstance(coin, str) or not coin or coin == "USDC":
+            continue
+        try:
+            total = D(str(row.get("total") or "0"))
+        except Exception:
+            continue
+        if total > 0:
+            out[coin] = total
+    return out
 
 
 def _addr_ok(value) -> bool:
