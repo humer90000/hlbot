@@ -1,4 +1,4 @@
-# Local Hyperliquid Tradebot
+# Local Hyperliquid Trading Bot
 
 A Hyperliquid bot that runs on your computer. You manage it in the browser: coins, strategies, risk, the account. The page is only on this machine (`127.0.0.1`), so the setup does not leave the box.
 
