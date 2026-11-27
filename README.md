@@ -219,9 +219,3 @@ py -3 -m hlbot guard --heartbeat state/heartbeat
 ```
 
 This only prints ok or stale. It does not close positions.
-
-Tests, if you installed with the dev extra (`pip install -e ".[dev]"`):
-
-```
-py -3 -m pytest
-```
