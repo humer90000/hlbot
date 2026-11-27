@@ -1,12 +1,27 @@
 # Local Hyperliquid Trading Bot
 
-A Hyperliquid bot that runs on your computer. You manage it in the browser: coins, strategies, risk, the account. The page is only on this machine (`127.0.0.1`), so the setup does not leave the box.
+A trading desk for Hyperliquid that runs on your computer. You choose the coins, the strategy, and the risk. The bot watches the live book and places the order. Fills stay on this machine until you connect an agent and arm the desk.
 
 ![desk after login](desk.png)
 
-Paper mode is the default. It reads the real market, but the fills stay inside the program. Nothing is sent to the exchange until you connect an agent wallet and press Arm. For a live account you also need an empty file named `ARM` in the project folder. That file is not a password. The program only checks that it exists.
+## What it does
 
-The main wallet key does not belong here. An agent key can sign orders. It cannot withdraw.
+- Covers Hyperliquid perps, spot, and HIP-3 from one local page. BTC and ETH start on. The rest stay off until you turn them on.
+- Runs one strategy at a time. EMA, RSI, MACD, Bollinger, and Donchian ship with the example. You can add your own, including a plain rule list.
+- Sizes the trade from the risk you set, then cuts it to the book, the spread, your free margin, and the daily loss limit.
+- Sets leverage per coin, from 1x up to that coin's maximum on the exchange. 1x is the default, and the size stays inside equity. The top of the slider is marked: liquidation sits close to the price.
+- Sends a reduce-only stop with the entry. A target is optional. Flatten closes an open position without flipping you the other way.
+- Paper, testnet, and live are the same desk. Paper reads real prices and does not send orders. Testnet and live need an agent key. Live also needs an empty `ARM` file in the project folder before Arm will stick.
+
+The master private key does not belong in the bot, the config, or the page. The agent signs orders. It cannot withdraw, and it cannot move USDC to the spot wallet.
+
+## How it works
+
+1. Start the program. It prints a local address and a token. Open the page, paste the token. The page listens on `127.0.0.1` only.
+2. Stay on paper. Pick the bar size, leave one strategy on, and check the risk numbers. Arm when you want new entries. Halt blocks new entries and still lets exits run. Disarm stops entries and leaves the position until you flatten or a stop fills.
+3. Connect an agent when paper looks right. Do testnet before live. Connect does not arm the desk. On live, create the `ARM` file first. The agent key stays in memory for that run and is gone after a restart.
+
+The strategy only asks. A stale quote, a thin book, a stop on the wrong side, or a position already close to liquidation will still drop the order. The reason shows on the Tape.
 
 ## Install
 
