@@ -34,7 +34,8 @@
 <p>Equity and day are the paper wallet until Account is connected. The loop time is how long the last decision took. If that number climbs, the page is still only a screen. The python process is the thing that can send an order.</p>
 
 <h2>Arm, Halt, Flatten</h2>
-<p><b>Arm</b> is the switch for new entries. Press it when the coins and the strategy look right and you actually want a fill. In paper the fill stays on this machine. On testnet or live the agent signs it. Live also refuses to arm until an empty file named <code>ARM</code> sits in the project folder. That file is a latch, not a password. Disarm stops new entries. What is already open stays until a stop fills or you flatten.</p>
+<p><b>Arm</b> is the switch for new entries. Press it when the coins and the strategy look right and you actually want a fill. In paper the fill stays on this machine. On testnet or live the agent signs it. Disarm stops new entries. What is already open stays until a stop fills or you flatten.</p>
+<p>On live, Arm also looks for an empty file named <code>ARM</code> in the project folder. That file is only a safety latch. It is not a password, and the bot never reads the inside. The agent key can already sign orders, and Arm is one click. The file is the extra step you have to mean. No file, no live arm. Paper and testnet ignore it. Delete the file when you do not want live arming. If the desk is already armed, press Disarm too. The check runs when you press Arm.</p>
 <p><b>Halt</b> is the panic that still lets exits through. Use it when the book looks wrong, or you want the stop and the flatten path to keep working, but no new position. The red line stays on screen until <b>Resume</b>.</p>
 <p><b>Flatten</b> closes what is open, reduce-only, so it cannot flip you into the other side. Use it when you want out now, not at the stop. If nothing is open it just says so. A close is allowed to reach further through the mid than an entry, because an entry is picky and an exit has to get out of a wide book.</p>
 
@@ -73,7 +74,7 @@
 <p>Stay on paper until the page, the coins, and one strategy make sense. Paper reads the real prices and fills locally.</p>
 <p>Testnet is the next step. You need the master account address, <code>0x</code> and 40 hex characters, and an agent key from Hyperliquid. The master private key does not go in this box, the config, or the log. The agent signs orders. It cannot withdraw, and it cannot move USDC over to the spot wallet. Spot buys spend spot USDC. If that balance is empty, the buy is refused.</p>
 <p>Connect stores the agent key in the process memory until you stop the program. It does not arm. After a restart you connect again. Vault stays empty unless the agent is trading a vault.</p>
-<p>Live is the same form plus the <code>ARM</code> file, and only after testnet has done the thing you care about. Switching back to paper asks first, because it drops the link and resets the local wallet to the starting equity.</p>
+<p>Live is the same form plus the <code>ARM</code> file, and only after testnet has done the thing you care about. The file is the safety latch from the Arm section: create it when you mean to trade live, delete it when you do not. Switching back to paper asks first, because it drops the link and resets the local wallet to the starting equity.</p>
 <p>Perp free is what the next perp entry can lean on. The cushion for leverage is taken out of that, not out of the spot balance.</p>
 
 <h2>Tape</h2>

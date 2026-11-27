@@ -11,7 +11,7 @@ A trading desk for Hyperliquid that runs on your computer. You choose the coins,
 - Sizes the trade from the risk you set, then cuts it to the book, the spread, your free margin, and the daily loss limit.
 - Sets leverage per coin, from 1x up to that coin's maximum on the exchange. 1x is the default, and the size stays inside equity. The top of the slider is marked: liquidation sits close to the price.
 - Sends a reduce-only stop with the entry. A target is optional. Flatten closes an open position without flipping you the other way.
-- Paper, testnet, and live are the same desk. Paper reads real prices and does not send orders. Testnet and live need an agent key. Live also needs an empty `ARM` file in the project folder before Arm will stick.
+- Paper, testnet, and live are the same desk. Paper reads real prices and does not send orders. Testnet and live need an agent key. Live will not arm until an empty file named `ARM` is in the project folder. That file is only a safety latch. It is not a password.
 
 The master private key does not belong in the bot, the config, or the page. The agent signs orders. It cannot withdraw, and it cannot move USDC to the spot wallet.
 
@@ -19,9 +19,25 @@ The master private key does not belong in the bot, the config, or the page. The 
 
 1. Start the program. It prints a local address and a token. Open the page, paste the token. The page listens on `127.0.0.1` only.
 2. Stay on paper. Pick the bar size, leave one strategy on, and check the risk numbers. Arm when you want new entries. Halt blocks new entries and still lets exits run. Disarm stops entries and leaves the position until you flatten or a stop fills.
-3. Connect an agent when paper looks right. Do testnet before live. Connect does not arm the desk. On live, create the `ARM` file first. The agent key stays in memory for that run and is gone after a restart.
+3. Connect an agent when paper looks right. Do testnet before live. Connect does not arm the desk. On live, the `ARM` file has to be in the folder first. The agent key stays in memory for that run and is gone after a restart.
 
 The strategy only asks. A stale quote, a thin book, a stop on the wrong side, or a position already close to liquidation will still drop the order. The reason shows on the Tape.
+
+## The ARM file
+
+This file exists only for safety. It is not a key, not a password, and not a config. The bot does not read what is written in it. On live, when you press Arm, it checks that a file named `ARM` is sitting in the project folder. If the file is missing, Arm does nothing and no live entry is sent. Paper and testnet do not look for it.
+
+The agent key already lets the program sign orders. Arm is one click on the page. A click is easy to hit by mistake, or to leave armed, or for someone else at the keyboard to press. The file is the extra step you have to mean. You create it when you are ready for real orders. You delete it when you are not. A loaded key, by itself, cannot arm live.
+
+From the project folder:
+
+```
+New-Item ARM -ItemType File
+```
+
+On Linux or Mac, `touch ARM`. The file can be empty.
+
+Delete `ARM` when you want live arming turned off. The check happens when you press Arm, not on every order. If the desk is already armed, press Disarm or stop the program as well. Do not commit the file. It is in `.gitignore` on purpose. If it were in the repo, every copy would already be allowed to arm live.
 
 ## Install
 
@@ -133,13 +149,7 @@ Then in the page, Account:
 
 The key stays in memory for this run. It is not written to the config, the log, or the page. After a restart you connect again.
 
-Connect does not arm anything. For live, make the empty file before you press Arm:
-
-```
-New-Item ARM -ItemType File
-```
-
-On Linux or Mac, `touch ARM`. Testnet does not need the file. Live without the file will not arm.
+Connect does not arm anything. Testnet does not need `ARM`. Live does. Create that file the way the section above describes, then press Arm.
 
 There is a second way. Put this in `config.toml`:
 
