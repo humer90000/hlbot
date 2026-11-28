@@ -116,6 +116,12 @@ def _books(session, stop, prices, candles):
             return
 
 
+def _book_sub(api):
+    # 20 levels landed about every 4s and the gate already calls 1.5s stale
+    # return {"type": "l2Book", "coin": api}
+    return {"type": "l2Book", "coin": api, "fast": True}
+
+
 def _subscribe_enabled(session, sock):
     want = session.interval
     enabled = set(session.enabled_names())
@@ -126,7 +132,7 @@ def _subscribe_enabled(session, sock):
         api = (coin.api or name) if coin else name
         try:
             if name not in enabled:
-                sock.send(json.dumps({"method": "unsubscribe", "subscription": {"type": "l2Book", "coin": api}}))
+                sock.send(json.dumps({"method": "unsubscribe", "subscription": _book_sub(api)}))
             sock.send(
                 json.dumps(
                     {"method": "unsubscribe", "subscription": {"type": "candle", "coin": api, "interval": old}}
@@ -144,7 +150,7 @@ def _subscribe_enabled(session, sock):
             continue
         api = coin.api or name
         try:
-            sock.send(json.dumps({"method": "subscribe", "subscription": {"type": "l2Book", "coin": api}}))
+            sock.send(json.dumps({"method": "subscribe", "subscription": _book_sub(api)}))
             sock.send(
                 json.dumps(
                     {"method": "subscribe", "subscription": {"type": "candle", "coin": api, "interval": want}}
@@ -168,7 +174,10 @@ def _mids(session, stop, mids, candles):
             except Exception as exc:
                 session.last_error = exc.__class__.__name__
         age = session.quote_age_ms()
-        if session.feed != "ws" or age is None or age > 2000:
+        stale = int(getattr(session.limits, "stale_ms", 1500) or 1500)
+        # if session.feed != "ws" or age is None or age > 2000:
+        # 2000 was already over stale_ms, so half the steps just said stale book
+        if session.feed != "ws" or age is None or age > max(800, stale - 400):
             try:
                 mids(session)
                 if session.feed != "ws":

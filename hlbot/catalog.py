@@ -70,6 +70,13 @@ def parse_catalog(perp_meta, spot_meta, dex_metas=None) -> dict:
     return coins
 
 
+def reload_due(last_ms, now_ms, every_ms=600_000) -> bool:
+    # used to load once at startup. a listing then sat out until someone hit reload.
+    if not last_ms:
+        return True
+    return now_ms - last_ms >= every_ms
+
+
 def fetch_catalog(post) -> dict:
     perp = post({"type": "meta"})
     spot = post({"type": "spotMeta"})

@@ -66,7 +66,7 @@ class Breakout:
         return row
 
     def generate(self, snap):
-        return _entries(self, snap, lambda book: _breakout_side(book, self.donchian))
+        return _entries(self, snap, lambda book: _side(self, book))
 
 
 class Rules:
@@ -90,13 +90,12 @@ class Rules:
         return row
 
     def generate(self, snap):
-        def signal(book):
-            for rule in self.rules:
-                if _rule_hit(book, rule):
-                    return rule["side"]
-            return None
-
-        return _entries(self, snap, signal)
+        # def signal(book):
+        #     for rule in self.rules:
+        #         if _rule_hit(book, rule):
+        #             return rule["side"]
+        # ema had its own copy and the two got out of step
+        return _entries(self, snap, lambda book: _side(self, book))
 
 
 class Ema:
@@ -115,7 +114,7 @@ class Ema:
         return row
 
     def generate(self, snap):
-        return _entries(self, snap, lambda book: _ema_side(book.closes, self.fast, self.slow))
+        return _entries(self, snap, lambda book: _side(self, book))
 
 
 class Spec:
@@ -151,17 +150,10 @@ class Spec:
         return row
 
     def generate(self, snap):
-        kind = self.kind
-
-        def signal(book):
-            c = book.closes
-            if kind == "rsi":
-                return _rsi_side(c, self.rsi_len, self.rsi_buy, self.rsi_sell)
-            if kind == "macd":
-                return _macd_side(c, self.fast, self.slow, self.signal)
-            return _band_side(c, self.length, self.mult)
-
-        return _entries(self, snap, signal)
+        # kind = self.kind
+        # if kind == "rsi": return _rsi_side(...)
+        # same switch lived in why_idle, so it moved
+        return _entries(self, snap, lambda book: _side(self, book))
 
 
 _KIND_FIELDS = {
@@ -343,6 +335,83 @@ def preset_rows():
 
 def presets():
     return [build_strategy(row) for row in preset_rows()]
+
+
+def _side(strat, book):
+    kind = getattr(strat, "kind", "")
+    if kind == "breakout":
+        return _breakout_side(book, strat.donchian)
+    if kind == "rules":
+        for rule in strat.rules:
+            if _rule_hit(book, rule):
+                return rule["side"]
+        return None
+    if kind == "ema":
+        return _ema_side(book.closes, strat.fast, strat.slow)
+    if kind == "rsi":
+        return _rsi_side(book.closes, strat.rsi_len, strat.rsi_buy, strat.rsi_sell)
+    if kind == "macd":
+        return _macd_side(book.closes, strat.fast, strat.slow, strat.signal)
+    if kind == "bollinger":
+        return _band_side(book.closes, strat.length, strat.mult)
+    return None
+
+
+def why_idle(strat, snap) -> str:
+    # blank = something is about to hit the gate, don't also say "quiet"
+    names = _selected(strat, snap)
+    if not names:
+        return "no enabled coins"
+    holding, funding, bars, quiet, spot_short = [], [], [], [], []
+    for name in names:
+        book = snap.books.get(name)
+        coin = snap.coins.get(name)
+        if book is None or coin is None or len(book.closes) < 3:
+            bars.append(name)
+            continue
+        pos = snap.positions.get(name, Decimal(0))
+        if coin.market == "spot":
+            pos = snap.spot.get(coin.base, Decimal(0))
+        if pos != 0:
+            sig = _side(strat, book)
+            bars_held = snap.pos_bars.get(name, 0)
+            closing = bars_held >= strat.max_hold_bars or (pos > 0 and sig == "sell") or (pos < 0 and sig == "buy")
+            if closing:
+                return ""
+            holding.append(name)
+            continue
+        sig = _side(strat, book)
+        if sig is None:
+            quiet.append(name)
+            continue
+        if coin.market == "spot" and sig == "sell":
+            spot_short.append(name)
+            continue
+        if not _funding_ok(sig, book.funding, strat.funding_block, coin.market):
+            funding.append(name)
+            continue
+        if _atr(book, strat.atr_len) is None:
+            bars.append(name)
+            continue
+        return ""
+    parts = []
+    if holding:
+        parts.append("holding " + _few(holding))
+    if funding:
+        parts.append("funding blocks " + _few(funding))
+    if bars:
+        parts.append("waiting for bars on " + _few(bars))
+    if spot_short:
+        parts.append("spot does not short " + _few(spot_short))
+    if quiet:
+        parts.append("no signal on " + _few(quiet))
+    return ". ".join(parts)
+
+
+def _few(names):
+    if len(names) <= 3:
+        return ", ".join(names)
+    return ", ".join(names[:3]) + " +" + str(len(names) - 3)
 
 
 def _selected(strat, snap):

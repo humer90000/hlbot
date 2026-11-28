@@ -32,7 +32,7 @@ class SimBroker:
             return Decimal(0)
         return row[0]
 
-    def equity(self, mids: dict) -> Decimal:
+    def equity(self, mids: dict, spot_px=None) -> Decimal:
         upnl = Decimal(0)
         for name, (szi, entry) in self.pos.items():
             mid = mids.get(name, entry)
@@ -40,6 +40,16 @@ class SimBroker:
                 upnl += (mid - entry) * szi
             elif szi < 0:
                 upnl += (entry - mid) * abs(szi)
+        # return self.cash + upnl
+        # spot buy took the cash and the coin never came back into equity, day stop fired on the fill
+        if spot_px:
+            for base, qty in self.spot.items():
+                if qty == 0:
+                    continue
+                px = spot_px.get(base)
+                if px is None or px <= 0:
+                    continue
+                upnl += qty * D(px)
         return self.cash + upnl
 
     def submit(self, plan, book, coin=None) -> Fill | None:
@@ -156,22 +166,46 @@ class SimBroker:
         if coin is None or not coin.base:
             return Decimal(0)
         base = coin.base
+        quote = coin.quote or "USDC"
+        # if plan.side == "buy": self.cash -= sz * px  ... that charged USDC for a HYPE/ETH pair
+        usdc = quote == "USDC"
         if plan.side == "buy":
             cost = sz * px
-            if cost > self.cash and px > 0:
-                sz = self.cash / px
-                cost = sz * px
-            if sz <= 0:
-                return Decimal(0)
-            self.cash -= cost
+            if usdc:
+                if cost > self.cash and px > 0:
+                    sz = self.cash / px
+                    cost = sz * px
+                if sz <= 0:
+                    return Decimal(0)
+                self.cash -= cost
+            else:
+                have_q = self.spot.get(quote, Decimal(0))
+                if cost > have_q and px > 0:
+                    sz = have_q / px
+                    cost = sz * px
+                if sz <= 0:
+                    return Decimal(0)
+                left_q = have_q - cost
+                if left_q <= 0:
+                    self.spot.pop(quote, None)
+                else:
+                    self.spot[quote] = left_q
             self.spot[base] = self.spot.get(base, Decimal(0)) + sz
             return sz
         have = self.spot.get(base, Decimal(0))
         sz = min(sz, have)
         if sz <= 0:
             return Decimal(0)
-        self.spot[base] = have - sz
-        self.cash += sz * px
+        left = have - sz
+        if left <= 0:
+            self.spot.pop(base, None)
+        else:
+            self.spot[base] = left
+        proceeds = sz * px
+        if usdc:
+            self.cash += proceeds
+        else:
+            self.spot[quote] = self.spot.get(quote, Decimal(0)) + proceeds
         return sz
 
 

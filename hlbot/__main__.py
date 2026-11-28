@@ -47,9 +47,30 @@ def _load_markets(session):
 
     coins = fetch_catalog(post)
     session.replace_catalog(coins)
+    session.catalog_ms = int(time.time() * 1000)
     print(f"markets {len(coins)}", flush=True)
     _refresh_prices(session, post)
     session.seed_coins()
+
+
+def _sync_catalog(session, post):
+    from hlbot.catalog import reload_due
+
+    now = int(time.time() * 1000)
+    if not reload_due(getattr(session, "catalog_ms", 0), now):
+        return
+    try:
+        coins = fetch_catalog(post)
+    except Exception as exc:
+        session.last_error = exc.__class__.__name__
+        return
+    before = sum(1 for c in session.coins.values() if not c.delisted)
+    session.replace_catalog(coins)
+    session.catalog_ms = now
+    after = sum(1 for c in session.coins.values() if not c.delisted)
+    if before and after != before:
+        session.note(f"markets {after}")
+        print(f"markets {after}", flush=True)
 
 
 def _refresh_prices(session, post=None):
@@ -57,6 +78,7 @@ def _refresh_prices(session, post=None):
         def post(payload):
             return post_info(session.info_url, payload)
 
+    _sync_catalog(session, post)
     now = int(time.time() * 1000)
     books = {}
     meta, ctxs = post({"type": "metaAndAssetCtxs"})

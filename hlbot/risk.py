@@ -40,6 +40,37 @@ def _picked(gate, name):
     return 1
 
 
+def liq_price(entry, szi, lev, max_lev, cross, cash):
+    # had this as entry * (1 - 1/lev) and then blocked the trade when that was under 15%.
+    # that made 10x on btc unusable. maintenance is half the initial margin at the coin max.
+    entry = D(entry)
+    sz = abs(D(szi))
+    if entry <= 0 or sz <= 0:
+        return None
+    try:
+        lev = int(lev)
+        max_lev = int(max_lev)
+    except (TypeError, ValueError):
+        return None
+    if lev < 1 or max_lev < 1:
+        return None
+    mmr = Decimal(1) / (Decimal(2) * Decimal(max_lev))
+    if mmr > Decimal("0.5"):
+        mmr = Decimal("0.5")
+    if not cross:
+        imr = Decimal(1) / Decimal(lev)
+        px = entry * (1 - imr + mmr) if szi > 0 else entry * (1 + imr - mmr)
+        return px if px > 0 else None
+    if szi > 0:
+        denom = sz * (mmr - 1)
+        if denom == 0:
+            return None
+        px = (D(cash) - entry * sz) / denom
+    else:
+        px = (D(cash) + entry * sz) / (sz * (1 + mmr))
+    return px if px > 0 else None
+
+
 def use_leverage(limits, coin, margin="cross", chosen=1):
     # spot never borrows. a perp uses the number picked for that coin, and never past the exchange max.
     if coin is None or coin.market != "perp":

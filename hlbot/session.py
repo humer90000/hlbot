@@ -11,7 +11,7 @@ from pathlib import Path
 from hlbot.guard import flatten_intents, heartbeat_due
 from hlbot.models import Account, Reject
 from hlbot.px import D, fmt_num, round_px
-from hlbot.risk import Gate, decide, use_leverage
+from hlbot.risk import Gate, decide, liq_price, use_leverage
 from hlbot.sim import SimBroker
 from hlbot.wire import build_action, make_cloid
 
@@ -77,6 +77,9 @@ class Session:
         self.paper_equity = D(equity)
         self.broker = SimBroker(equity)
         self.day_start = D(equity)
+        self.day_key = None
+        self.why = {}
+        self.catalog_ms = 0
         self.live_equity = None
         self.account_address = ""
         self.vault_address = ""
@@ -159,7 +162,33 @@ class Session:
     def _equity(self):
         if self.mode in ("live", "testnet") and self.live_equity is not None:
             return self.live_equity
-        return self.broker.equity(self.mids())
+        return self.broker.equity(self.mids(), self._spot_marks())
+
+    def _spot_marks(self):
+        # usdc pair is the price. something/ETH needs ETH priced in usdc too or we skip it.
+        mids = self.mids()
+        usdc = {}
+        other = {}
+        for coin in self.coins.values():
+            if coin.market != "spot" or not coin.base or coin.base == "USDC":
+                continue
+            mid = mids.get(coin.name)
+            if mid is None or mid <= 0:
+                continue
+            quote = coin.quote or "USDC"
+            if quote == "USDC":
+                usdc.setdefault(coin.base, mid)
+            else:
+                other.setdefault(coin.base, (quote, mid))
+        out = dict(usdc)
+        for base, (quote, px) in other.items():
+            if base in out:
+                continue
+            q = usdc.get(quote)
+            if q is None or q <= 0:
+                continue
+            out[base] = px * q
+        return out
 
     def _loss_hit(self) -> bool:
         eq = self._equity()
@@ -204,6 +233,7 @@ class Session:
 
     def _step(self):
         self._stamp()
+        self._roll_day()
         self._ensure_leverage()
         loss = self._loss_hit()
         flatten_now = heartbeat_due(self.now_ms, self.beat_ms, self.beat_max_ms, loss)
@@ -221,7 +251,38 @@ class Session:
                 if not strat.enabled:
                     continue
                 intents.extend(strat.generate(snap))
+            self._explain(snap)
         return self._apply(intents)
+
+    def _roll_day(self):
+        # day_start used to stick until restart, so a desk left up all week was one long day
+        if self.now_ms <= 0:
+            return
+        key = time.gmtime(self.now_ms / 1000)
+        key = (key.tm_year, key.tm_yday)
+        if self.day_key is None:
+            self.day_key = key
+            return
+        if key == self.day_key:
+            return
+        self.day_key = key
+        self.day_start = self._equity()
+        self.note("new day")
+
+    def _explain(self, snap):
+        from hlbot.strat import why_idle
+
+        for strat in self.strategies:
+            if not strat.enabled:
+                if self.why.get(strat.name):
+                    self.why[strat.name] = ""
+                continue
+            text = why_idle(strat, snap)
+            if self.why.get(strat.name) == text:
+                continue
+            self.why[strat.name] = text
+            if text:
+                self.note(f"{strat.name} {text}")
 
     def flatten(self):
         with self.lock:
@@ -277,9 +338,81 @@ class Session:
         return out
 
     def _fire_exits(self):
+        self._paper_liq()
         for kind, fill in self.broker.check_exits(self.books, self.coins, self.now_ms):
             self.note(f"{kind} {fill.coin} {fmt_num(fill.sz)} @ {fmt_num(fill.px)}")
             self._journal("fill", fill.coin, f"{kind} {fill.sz}@{fill.px}")
+
+    def _paper_liq(self):
+        # stops were the only paper exit. isolated 40x never actually got liquidated.
+        found = {}
+        maint = D(0)
+        mids = self.mids()
+        for name, (szi, entry) in list(self.broker.pos.items()):
+            if szi == 0:
+                continue
+            coin = self.coins.get(name)
+            if coin is None or coin.market != "perp":
+                continue
+            lev, cross = use_leverage(self.limits, coin, self.margin, self.leverage.get(name, 1))
+            px = liq_price(entry, szi, lev, coin.max_leverage, cross, self.broker.cash)
+            if px is not None:
+                found[name] = float(px)
+            mark = mids.get(name, entry)
+            mmr = D(1) / (D(2) * D(max(int(coin.max_leverage), 1)))
+            maint += abs(szi) * mark * mmr
+            book = self.books.get(name)
+            if px is None or book is None or book.bid <= 0 or book.ask <= 0:
+                continue
+            hit = (szi > 0 and book.bid <= float(px)) or (szi < 0 and book.ask >= float(px))
+            if hit:
+                self._paper_flatten(name, book, coin, szi)
+                found.pop(name, None)
+        self.liq = found
+        if self.margin != "cross" or maint <= 0 or self._equity() > maint:
+            return
+        for name, (szi, _entry) in list(self.broker.pos.items()):
+            if szi == 0:
+                continue
+            coin = self.coins.get(name)
+            book = self.books.get(name)
+            if coin is None or coin.market != "perp" or book is None:
+                continue
+            self._paper_flatten(name, book, coin, szi)
+            self.liq.pop(name, None)
+
+    def _paper_flatten(self, name, book, coin, szi):
+        from hlbot.models import OrderPlan
+
+        side = "sell" if szi > 0 else "buy"
+        touch = book.bid if side == "sell" else book.ask
+        if touch <= 0:
+            return
+        self._liq_n = getattr(self, "_liq_n", 0) + 1
+        plan = OrderPlan(
+            coin=name,
+            asset=coin.asset,
+            market=coin.market,
+            side=side,
+            sz=abs(szi),
+            limit_px=D(touch),
+            tif="Ioc",
+            reduce_only=True,
+            cloid=make_cloid("liq", name, self.now_ms, self._liq_n),
+            stop_px=None,
+            take_px=None,
+            purpose="close",
+            strategy="liq",
+            hl_coin=coin.api or name,
+            sz_decimals=coin.sz_decimals,
+        )
+        fill = self.broker.submit(plan, book, coin)
+        self.broker.exits.pop(name, None)
+        if fill is None:
+            self.note(f"liq miss {name}")
+            return
+        self.note(f"liq {name} {fmt_num(fill.sz)} @ {fmt_num(fill.px)}")
+        self._journal("fill", name, f"liq {fill.sz}@{fill.px}")
 
     def set_margin(self, mode):
         mode = (mode or "").strip().lower()
@@ -1017,6 +1150,7 @@ class Session:
                 "margin": self.margin,
                 "ceilings": _ceilings(),
                 "strategies": [s.as_dict() for s in self.strategies],
+                "quiet": dict(self.why),
                 "last_error": self.last_error,
                 "link": {
                     "address": self.account_address,

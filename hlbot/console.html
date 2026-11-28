@@ -590,6 +590,12 @@ function paintChrome() {
   armBtn.disabled = false;
   armBtn.textContent = state.armed ? "Disarm" : "Arm";
   armBtn.className = state.armed ? "btn" : "btn primary";
+  if (tab === "strategies") {
+    document.querySelectorAll("[data-why]").forEach((el) => {
+      const text = (state.quiet && state.quiet[el.dataset.why]) || "";
+      if (el.textContent !== text) el.textContent = text;
+    });
+  }
   const tape = $("tape");
   if (tab === "tape" && document.activeElement !== tape) {
     const next = (state.log || []).map(tapeLine).join("\n") || "quiet.";
@@ -1035,6 +1041,11 @@ function stratCard(s) {
   head.appendChild(title);
   head.appendChild(kind);
   card.appendChild(head);
+  const why = document.createElement("div");
+  why.className = "hint";
+  why.dataset.why = s.name;
+  why.textContent = (state && state.quiet && state.quiet[s.name]) || "";
+  card.appendChild(why);
   if (s.kind === "rules") {
     const area = document.createElement("textarea");
     area.className = "json";
@@ -1166,9 +1177,12 @@ function deskMargin(c) {
   return n + "x " + (iso ? "isolated" : "cross");
 }
 function leverageHint(n, top) {
-  if (n >= top && top > 1) return "this is the highest the exchange allows on this coin. the liquidation sits close to the price, and a small move can wipe the margin.";
-  if (n <= 1) return "1x keeps the size inside equity. this coin's exchange max is " + top + "x.";
-  return "the exchange is set to " + n + "x before an entry. this coin goes up to " + top + "x.";
+  // if (n <= 1) return "1x keeps the size inside equity. this coin's exchange max is " + top + "x.";
+  // people read 40x as a bigger order. it only moves the liquidation.
+  const size = " the order size stays with the strategy and the order cap. this slider does not make the bet bigger.";
+  if (n >= top && top > 1) return "this is the highest the exchange allows on this coin. the liquidation sits close to the price, and a small move can wipe the margin." + size;
+  if (n <= 1) return "1x keeps the size inside equity. this coin's exchange max is " + top + "x. raising this pulls liquidation closer, it does not make the order bigger.";
+  return n + "x is what the exchange is set to before an entry. higher pulls liquidation closer." + size;
 }
 function leverageBox(c) {
   const top = Math.max(1, Math.floor(Number(c.max_leverage) || 1));
@@ -1369,7 +1383,9 @@ async function toggleCoin(c) {
 }
 async function enableLiquid() {
   const n = coins.filter((c) => c.liquid && !c.enabled).length;
-  const ok = await ask("Enable liquid markets", n + " names clear the spread / volume cut. thin ones stay off.", "Enable " + n);
+  if (!n) { toast("nothing else liquid"); return; }
+  // n + " names clear the spread / volume cut. thin ones stay off."
+  const ok = await ask("Enable liquid markets", n + " coins will be turned on. thin ones stay off.", "Enable " + n);
   if (!ok) return;
   try {
     const r = await api("/api/coins/enable-liquid", { method: "POST" });
