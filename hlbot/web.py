@@ -163,7 +163,12 @@ def create_app(session, token: str, reload_fn=None) -> FastAPI:
 
     @app.post("/api/flatten")
     def flatten():
-        return {"ok": True, "n": len(session.flatten())}
+        from hlbot.models import Reject
+
+        rows = session.flatten()
+        sent = sum(1 for row in rows if not isinstance(row, Reject))
+        rejected = [row.reason for row in rows if isinstance(row, Reject)]
+        return {"ok": True, "n": sent, "rejected": rejected}
 
     @app.post("/api/step")
     def step():

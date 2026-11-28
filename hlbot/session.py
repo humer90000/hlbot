@@ -359,10 +359,14 @@ class Session:
             self.note(f"send failed {plan.coin} {exc.__class__.__name__}")
             self._mark_unconfirmed()
             return None
-        from hlbot.live import order_problem
+        from hlbot.live import order_problem, stop_child_failed
 
         problem = order_problem(result)
-        if problem:
+        # a filled entry whose stop line failed still needs a stop. the error is the child, not the fill.
+        if stop_child_failed(result) and plan.stop_px is not None and not plan.reduce_only and not plan.trigger:
+            self.note(f"stop failed {plan.coin} {problem or 'rejected'}")
+            self._cover_partial(plan, result, coin, force=True)
+        elif problem:
             self.note(f"send failed {plan.coin} {problem}")
         elif plan.stop_px is not None and not plan.reduce_only and not plan.trigger:
             # a partial IOC does not leave the child stop on the book
@@ -371,7 +375,7 @@ class Session:
         self._mark_unconfirmed()
         return None
 
-    def _cover_partial(self, plan, result, coin):
+    def _cover_partial(self, plan, result, coin, force=False):
         from hlbot.live import filled_sz, order_problem
 
         got = filled_sz(result)
@@ -379,9 +383,11 @@ class Session:
             return
         # one lot short is still a partial. the exchange keeps the child stop only on a full fill,
         # and testnet left a naked 0.00017 when the order was 0.00018.
-        if got >= plan.sz:
+        # force means the child line itself failed, so a full fill is naked too.
+        if got >= plan.sz and not force:
             return
-        self.note(f"partial {plan.coin} {fmt_num(got)}")
+        if got < plan.sz:
+            self.note(f"partial {plan.coin} {fmt_num(got)}")
         if plan.market == "perp":
             stop = replace(
                 plan,

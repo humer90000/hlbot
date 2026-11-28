@@ -36,8 +36,7 @@ def order_problem(result) -> str | None:
     return None
 
 
-def filled_sz(result):
-    # the first status is the entry. children come after it.
+def _statuses(result):
     if not isinstance(result, dict):
         return None
     response = result.get("response")
@@ -47,7 +46,32 @@ def filled_sz(result):
     if not isinstance(data, dict):
         return None
     statuses = data.get("statuses")
-    if not isinstance(statuses, list) or not statuses or not isinstance(statuses[0], dict):
+    if not isinstance(statuses, list) or not statuses:
+        return None
+    return statuses
+
+
+def stop_child_failed(result) -> bool:
+    # the entry can fill while the stop line in the same batch comes back as an error.
+    # treating that as "the send failed" left the position with no stop.
+    statuses = _statuses(result)
+    if not statuses or len(statuses) < 2:
+        return False
+    first = statuses[0]
+    if not isinstance(first, dict) or not isinstance(first.get("filled"), dict):
+        return False
+    for row in statuses[1:]:
+        if isinstance(row, dict) and row.get("error"):
+            return True
+        if isinstance(row, str) and row not in ("waitingForTrigger", "waitingForFill"):
+            return True
+    return False
+
+
+def filled_sz(result):
+    # the first status is the entry. children come after it.
+    statuses = _statuses(result)
+    if not statuses or not isinstance(statuses[0], dict):
         return None
     filled = statuses[0].get("filled")
     if not isinstance(filled, dict) or filled.get("totalSz") in (None, ""):

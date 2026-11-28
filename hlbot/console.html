@@ -1541,7 +1541,9 @@ $("flatten").onclick = async () => {
   if (!await ask("Flatten", "close what's open. reduce-only.", "Flatten")) return;
   try {
     const res = await api("/api/flatten", { method: "POST" });
-    toast(res.n ? "flatten sent" : "nothing open");
+    if (res.n) toast("flatten sent");
+    else if (res.rejected && res.rejected.length) toast(res.rejected[0], "bad");
+    else toast("nothing open");
     tick();
   }
   catch (err) { toast(err.message, "bad"); }
